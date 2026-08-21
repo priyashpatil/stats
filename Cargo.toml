@@ -1,0 +1,24 @@
+[package]
+name = "stats"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "A terminal dashboard for system metrics and AI coding usage"
+license = "MIT"
+readme = "README.md"
+keywords = ["dashboard", "monitoring", "terminal", "tui"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+chrono = "0.4"
+chrono-tz = "0.10"
+crossterm = "0.28"
+dirs = "6"
+rand = "0.8"
+ratatui = "0.29"
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sysinfo = "0.33"
+tungstenite = "0.26"
+ureq = "2"

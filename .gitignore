@@ -1,0 +1,11 @@
+.DS_Store
+.build/
+target/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx
