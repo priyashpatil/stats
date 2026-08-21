@@ -12,7 +12,7 @@ categories = ["command-line-utilities"]
 [dependencies]
 chrono = "0.4"
 chrono-tz = "0.10"
-crossterm = "0.28"
+crossterm = "0.29"
 dirs = "6"
 rand = "0.8"
 ratatui = "0.29"
