@@ -10,7 +10,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  verify:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
@@ -34,23 +34,53 @@ jobs:
           test "$version" = "$app_version"
           test "$version" = "$app_build"
 
+  build:
+    needs: verify
+    strategy:
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
       - name: Build release artifacts
         run: |
           version="${GITHUB_REF_NAME#v}"
-          arch="$(uname -m)"
+          test "$(uname -m)" = "${{ matrix.arch }}"
           cargo build --release --locked
           mkdir -p dist/cli
           macos/build-app.sh dist/Stats.app target/release/stats
 
           ditto -c -k --sequesterRsrc --keepParent \
-            dist/Stats.app "dist/Stats-${version}-macOS-${arch}.zip"
+            dist/Stats.app "dist/Stats-${version}-macOS-${{ matrix.arch }}.zip"
 
           cp target/release/stats README.md LICENSE dist/cli/
-          tar -C dist/cli -czf "dist/stats-${version}-macOS-${arch}.tar.gz" \
+          tar -C dist/cli -czf "dist/stats-${version}-macOS-${{ matrix.arch }}.tar.gz" \
             stats README.md LICENSE
           rm -rf dist/cli dist/Stats.app
 
-          (cd dist && shasum -a 256 ./*.zip ./*.tar.gz > SHA256SUMS)
+          (cd dist && shasum -a 256 ./*.zip ./*.tar.gz > "SHA256SUMS-${{ matrix.arch }}")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.arch }}
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: macos-15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
 
       - name: Publish GitHub release
         env:
@@ -58,7 +88,7 @@ jobs:
         run: |
           version="${GITHUB_REF_NAME#v}"
           gh release create "$GITHUB_REF_NAME" \
-            dist/*.zip dist/*.tar.gz dist/SHA256SUMS \
+            dist/*.zip dist/*.tar.gz dist/SHA256SUMS-* \
             --verify-tag \
             --generate-notes \
             --title "Stats $version"

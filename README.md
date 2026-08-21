@@ -18,14 +18,22 @@ Stats reads usage through the installed Amp and Codex CLIs. It does not read or 
 ## Requirements
 
 - macOS 11 or newer for the native app
-- Rust with Cargo
-- Swift 6.1 or newer
 - [Amp](https://ampcode.com/) installed and signed in
 - [Codex CLI](https://github.com/openai/codex) installed and signed in
 
 ## Install
 
-Clone the repository and run:
+### Download the macOS app
+
+1. Open the [latest release](https://github.com/priyashpatil/stats/releases/latest).
+2. Download the `Stats-...-macOS-arm64.zip` file for Apple Silicon or `Stats-...-macOS-x86_64.zip` for an Intel Mac.
+3. Unzip `Stats.app`, move it to `/Applications`, and open it.
+
+The downloaded app is self-contained and does not require Rust or Swift. Releases are ad-hoc signed but not Apple-notarized, so macOS may ask you to confirm the first launch in **System Settings → Privacy & Security**.
+
+### Build from source
+
+Install Rust with Cargo and Swift 6.1 or newer, then clone the repository and run:
 
 ```sh
 ./install.sh
@@ -49,7 +57,7 @@ The AI usage sections require both `amp` and `codex` to be available in `PATH`.
 
 Stats uses Calendar Versioning in the form `YYYY.M.PATCH`. The first release in a month uses patch `0`; subsequent fixes increment it. For example, `2026.8.1` is the first patch to the August 2026 release.
 
-Pushing a matching tag such as `v2026.8.0` builds a self-contained macOS app and CLI archive and publishes them to GitHub Releases. The tag, Cargo package, and app bundle versions must match.
+Pushing a matching tag such as `v2026.8.0` builds self-contained macOS apps and CLI archives for Apple Silicon and Intel, then publishes them to GitHub Releases with SHA-256 checksums. The tag, Cargo package, and app bundle versions must match.
 
 ## Usage
 

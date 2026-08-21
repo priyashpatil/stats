@@ -6,6 +6,8 @@ rust-version = "1.85"
 description = "A terminal dashboard for system metrics and AI coding usage"
 license = "MIT"
 readme = "README.md"
+repository = "https://github.com/priyashpatil/stats"
+homepage = "https://github.com/priyashpatil/stats"
 keywords = ["dashboard", "monitoring", "terminal", "tui"]
 categories = ["command-line-utilities"]
 
