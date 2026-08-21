@@ -36,14 +36,7 @@ jobs:
 
   build:
     needs: verify
-    strategy:
-      matrix:
-        include:
-          - runner: macos-15
-            arch: arm64
-          - runner: macos-15-intel
-            arch: x86_64
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -51,24 +44,24 @@ jobs:
       - name: Build release artifacts
         run: |
           version="${GITHUB_REF_NAME#v}"
-          test "$(uname -m)" = "${{ matrix.arch }}"
+          test "$(uname -m)" = arm64
           cargo build --release --locked
           mkdir -p dist/cli
           macos/build-app.sh dist/Stats.app target/release/stats
 
           ditto -c -k --sequesterRsrc --keepParent \
-            dist/Stats.app "dist/Stats-${version}-macOS-${{ matrix.arch }}.zip"
+            dist/Stats.app "dist/Stats-${version}-macOS-arm64.zip"
 
           cp target/release/stats README.md LICENSE dist/cli/
-          tar -C dist/cli -czf "dist/stats-${version}-macOS-${{ matrix.arch }}.tar.gz" \
+          tar -C dist/cli -czf "dist/stats-${version}-macOS-arm64.tar.gz" \
             stats README.md LICENSE
           rm -rf dist/cli dist/Stats.app
 
-          (cd dist && shasum -a 256 ./*.zip ./*.tar.gz > "SHA256SUMS-${{ matrix.arch }}")
+          (cd dist && shasum -a 256 ./*.zip ./*.tar.gz > SHA256SUMS-arm64)
 
       - uses: actions/upload-artifact@v4
         with:
-          name: release-${{ matrix.arch }}
+          name: release-arm64
           path: dist/
           if-no-files-found: error
 
@@ -78,9 +71,8 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          pattern: release-*
+          name: release-arm64
           path: dist
-          merge-multiple: true
 
       - name: Publish GitHub release
         env:
