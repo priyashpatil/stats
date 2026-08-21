@@ -26,20 +26,7 @@ for command in codex-usage codex-usage-status; do
     ln -sfn "$HOME/.cargo/bin/stats" "$HOME/.cargo/bin/$command"
 done
 
-swift build --package-path "$macos" -c release
-bin_dir="$(swift build --package-path "$macos" -c release --show-bin-path)"
-
-rm -rf "$app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-cp "$bin_dir/Stats" "$app/Contents/MacOS/Stats"
-cp "$macos/Info.plist" "$app/Contents/Info.plist"
-
-for resource_bundle in "$bin_dir"/*.bundle; do
-    [ -e "$resource_bundle" ] || continue
-    cp -R "$resource_bundle" "$app/Contents/Resources/"
-done
-
-codesign --force --deep --sign - "$app"
+"$macos/build-app.sh" "$app" "$HOME/.cargo/bin/stats"
 
 mkdir -p "$(dirname "$agent")"
 cat >"$agent" <<EOF

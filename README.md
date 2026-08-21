@@ -19,7 +19,7 @@ Stats reads usage through the installed Amp and Codex CLIs. It does not read or 
 
 - macOS 11 or newer for the native app
 - Rust with Cargo
-- Swift 6.2 or newer
+- Swift 6.1 or newer
 - [Amp](https://ampcode.com/) installed and signed in
 - [Codex CLI](https://github.com/openai/codex) installed and signed in
 
@@ -44,6 +44,12 @@ cargo install --path . --locked
 ```
 
 The AI usage sections require both `amp` and `codex` to be available in `PATH`.
+
+## Releases and versioning
+
+Stats uses Calendar Versioning in the form `YYYY.M.PATCH`. The first release in a month uses patch `0`; subsequent fixes increment it. For example, `2026.8.1` is the first patch to the August 2026 release.
+
+Pushing a matching tag such as `v2026.8.0` builds a self-contained macOS app and CLI archive and publishes them to GitHub Releases. The tag, Cargo package, and app bundle versions must match.
 
 ## Usage
 

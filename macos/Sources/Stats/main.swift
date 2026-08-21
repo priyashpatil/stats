@@ -13,9 +13,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     installMainMenu()
 
     let home = FileManager.default.homeDirectoryForCurrentUser.path
-    let executable = "\(home)/.cargo/bin/stats"
-    guard FileManager.default.isExecutableFile(atPath: executable) else {
-      showMissingExecutableAlert(executable)
+    let installedExecutable = "\(home)/.cargo/bin/stats"
+    let executableCandidates = [
+      Bundle.main.resourceURL?.appendingPathComponent("stats").path,
+      installedExecutable,
+    ].compactMap { $0 }
+    guard
+      let executable = executableCandidates.first(where: {
+        FileManager.default.isExecutableFile(atPath: $0)
+      })
+    else {
+      showMissingExecutableAlert(installedExecutable)
       NSApp.terminate(nil)
       return
     }
