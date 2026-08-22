@@ -320,7 +320,7 @@ fn collect_codex_ai_rows(
 ) {
     if let Some(error) = &codex.error {
         statuses.push(ai_status_row(
-            "Codex PRO",
+            "Codex Pro",
             format!("Error: {error}"),
             Color::Red,
         ));
@@ -328,7 +328,7 @@ fn collect_codex_ai_rows(
     }
     let Some(result) = &codex.result else {
         statuses.push(ai_status_row(
-            "Codex PRO",
+            "Codex Pro",
             "Loading Codex usage status...",
             Color::Yellow,
         ));
@@ -337,7 +337,7 @@ fn collect_codex_ai_rows(
     for snapshot in ordered_buckets(result) {
         if let Some(window) = codex_weekly_window(snapshot) {
             rows.push(AiQuotaRow {
-                label: "Codex PRO".into(),
+                label: "Codex Pro".into(),
                 percent_left: left_percent(window),
                 reset: Some(codex_compact_reset_label(window)),
                 suffix: None,
@@ -430,7 +430,7 @@ fn section(lines: &mut Vec<Line<'static>>, title: &str, meta: &str, width: usize
         used += meta.len() + 1;
     }
     spans.push(dim("  "));
-    spans.push(dim("─".repeat(width.saturating_sub(used + 2))));
+    spans.push(dim("-".repeat(width.saturating_sub(used + 2))));
     lines.push(Line::from(spans));
 }
 
@@ -740,7 +740,7 @@ mod tests {
 
         assert!(statuses.is_empty());
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].label, "Codex PRO");
+        assert_eq!(rows[0].label, "Codex Pro");
         assert_eq!(rows[0].percent_left, 96.0);
     }
 
@@ -770,7 +770,7 @@ mod tests {
     #[test]
     fn keeps_the_weekly_row_within_narrow_widths() {
         let row = AiQuotaRow {
-            label: "Codex PRO".into(),
+            label: "Codex Pro".into(),
             percent_left: 96.0,
             reset: Some("09:48am 8 Aug".into()),
             suffix: None,
@@ -801,7 +801,7 @@ mod tests {
                 suffix: None,
             },
             AiQuotaRow {
-                label: "Codex PRO".into(),
+                label: "Codex Pro".into(),
                 percent_left: 95.0,
                 reset: Some("27 Aug".into()),
                 suffix: None,
@@ -873,7 +873,7 @@ mod tests {
             .unwrap();
         let quota = text
             .iter()
-            .position(|line| line.contains("Codex PRO"))
+            .position(|line| line.contains("Codex Pro"))
             .unwrap();
 
         assert!(text[0].starts_with("AI"));

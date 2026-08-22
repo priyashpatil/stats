@@ -142,6 +142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
   private func processEnvironment(home: String) -> [String] {
     var environment = ProcessInfo.processInfo.environment
+    environment.removeValue(forKey: "NO_COLOR")
     environment["HOME"] = home
     environment["TERM"] = "xterm-256color"
     environment["COLORTERM"] = "truecolor"
