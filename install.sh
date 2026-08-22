@@ -8,7 +8,7 @@ if [ "$(uname -s)" != "Darwin" ]; then
     exit 1
 fi
 
-for command in cargo swift codesign plutil launchctl; do
+for command in cargo swift codesign iconutil launchctl plutil sips; do
     if ! command -v "$command" >/dev/null 2>&1; then
         echo "Missing required command: $command" >&2
         exit 1
