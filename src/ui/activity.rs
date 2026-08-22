@@ -7,12 +7,13 @@ use ratatui::text::{Line, Span};
 use super::{CODEX_GUTTER_WIDTH, ai_status_row, dim, equal_column_widths, fixed, span};
 use crate::model::{CodexActivitySummary, CodexActivityUsage, DailyTokenUsage, ProviderState};
 
-const ACTIVITY_GUTTER_WIDTH: usize = 4;
+const ACTIVITY_MIN_GUTTER_WIDTH: usize = 5;
 
 #[derive(Debug, Clone)]
 struct ActivityCalendar {
     start_week: NaiveDate,
     weeks: usize,
+    gutter_width: usize,
     utc_today: NaiveDate,
     latest_date: NaiveDate,
     tokens_by_date: BTreeMap<NaiveDate, u64>,
@@ -57,7 +58,7 @@ pub(super) fn render_codex_activity(
     for day_offset in 0..7 {
         let mut spans = vec![dim(fixed(
             ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][day_offset],
-            ACTIVITY_GUTTER_WIDTH,
+            calendar.gutter_width,
         ))];
         for week in 0..calendar.weeks {
             if week > 0 {
@@ -233,6 +234,7 @@ fn activity_calendar(
         .collect::<BTreeMap<_, _>>();
     let latest_date = *tokens_by_date.keys().next_back()?;
     let current_week = sunday_of_week(utc_today);
+    let gutter_width = activity_gutter_width(width);
     let weeks = activity_week_capacity(width);
     if weeks == 0 {
         return None;
@@ -249,6 +251,7 @@ fn activity_calendar(
     Some(ActivityCalendar {
         start_week,
         weeks,
+        gutter_width,
         utc_today,
         latest_date,
         tokens_by_date,
@@ -276,7 +279,13 @@ fn daily_token_usage(usage: &CodexActivityUsage) -> Option<Vec<DailyTokenUsage>>
 }
 
 fn activity_week_capacity(width: usize) -> usize {
-    width.saturating_sub(ACTIVITY_GUTTER_WIDTH).div_ceil(2)
+    width
+        .saturating_sub(activity_gutter_width(width))
+        .div_ceil(2)
+}
+
+fn activity_gutter_width(width: usize) -> usize {
+    ACTIVITY_MIN_GUTTER_WIDTH + usize::from(width % 2 == ACTIVITY_MIN_GUTTER_WIDTH % 2)
 }
 
 fn sunday_of_week(date: NaiveDate) -> NaiveDate {
@@ -355,7 +364,7 @@ fn activity_month_labels(calendar: &ActivityCalendar) -> Line<'static> {
         last_label_end = Some(x + label.len());
     }
     Line::from(vec![
-        dim(fixed("", ACTIVITY_GUTTER_WIDTH)),
+        dim(fixed("", calendar.gutter_width)),
         dim(text.into_iter().collect::<String>()),
     ])
 }
@@ -424,7 +433,8 @@ mod tests {
         render_codex_activity(&mut lines, &state, 30, date("2026-08-01"));
 
         assert_eq!(lines.len(), 14);
-        assert!(line_text(&lines[1]).starts_with("Sun ·"));
+        assert_eq!(line_text(&lines[1]).chars().count(), 30);
+        assert!(line_text(&lines[1]).starts_with("Sun  ·"));
         assert!(line_text(&lines[1]).ends_with('▪'));
         assert!(line_text(&lines[7]).ends_with('▪'));
         assert!(
