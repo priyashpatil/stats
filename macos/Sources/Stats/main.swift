@@ -3,14 +3,17 @@ import SwiftTerm
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
-  @preconcurrency LocalProcessTerminalViewDelegate
+  NSMenuDelegate, @preconcurrency LocalProcessTerminalViewDelegate
 {
   private let frameAutosaveName = "StatsWindow"
+  private var showHideMenuItem: NSMenuItem?
+  private var statusItem: NSStatusItem?
   private var terminal: LocalProcessTerminalView?
   private var window: NSWindow?
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     installMainMenu()
+    installStatusItem()
 
     let home = FileManager.default.homeDirectoryForCurrentUser.path
     let installedExecutable = "\(home)/.cargo/bin/stats"
@@ -28,7 +31,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       return
     }
 
-    let defaultFrame = NSRect(x: 0, y: 0, width: 500, height: 680)
+    let defaultWidth: CGFloat = 450
+    let defaultFrame = NSRect(x: 0, y: 0, width: defaultWidth, height: 646)
     let window = NSWindow(
       contentRect: defaultFrame,
       styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
@@ -44,13 +48,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     window.standardWindowButton(.miniaturizeButton)?.isHidden = true
     window.standardWindowButton(.zoomButton)?.isHidden = true
     window.delegate = self
-    window.contentMinSize = NSSize(width: 500, height: 420)
+    window.contentMinSize = NSSize(width: defaultWidth, height: 420)
     if !window.setFrameUsingName(frameAutosaveName) {
       window.center()
     }
-    if window.frame.width < 500 {
+    if window.frame.width < defaultWidth {
       var frame = window.frame
-      frame.size.width = 500
+      frame.size.width = defaultWidth
       window.setFrame(frame, display: false)
     }
     window.setFrameAutosaveName(frameAutosaveName)
@@ -63,7 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     )
     window.backgroundColor = background
 
-    let terminalFrame = (window.contentView?.bounds ?? .zero).insetBy(dx: 8, dy: 8)
+    let terminalFrame = (window.contentView?.bounds ?? .zero).insetBy(dx: 16, dy: 16)
     let font =
       NSFont(name: "JetBrainsMonoNL-Regular", size: 15)
       ?? NSFont.monospacedSystemFont(ofSize: 15, weight: .regular)
@@ -85,6 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     for scroller in terminal.subviews.compactMap({ $0 as? NSScroller }) {
       scroller.isHidden = true
     }
+    terminal.setFrameSize(terminal.frame.size)
     window.contentView?.addSubview(terminal)
 
     self.window = window
@@ -103,11 +108,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-    true
+    false
   }
 
-  func windowWillClose(_ notification: Notification) {
-    terminal?.terminate()
+  func windowShouldClose(_ sender: NSWindow) -> Bool {
+    sender.orderOut(nil)
+    return false
   }
 
   func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
@@ -118,6 +124,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
   func processTerminated(source: TerminalView, exitCode: Int32?) {
     NSApp.terminate(nil)
+  }
+
+  func menuWillOpen(_ menu: NSMenu) {
+    showHideMenuItem?.title = window?.isVisible == true ? "Hide Stats" : "Show Stats"
+  }
+
+  @objc private func toggleWindow(_ sender: Any?) {
+    guard let window else { return }
+    if window.isVisible {
+      window.orderOut(nil)
+    } else {
+      window.makeKeyAndOrderFront(nil)
+      NSApp.activate(ignoringOtherApps: true)
+    }
   }
 
   private func processEnvironment(home: String) -> [String] {
@@ -175,6 +195,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     NSApp.mainMenu = menu
   }
 
+  private func installStatusItem() {
+    let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    if let button = statusItem.button {
+      button.image =
+        NSImage(
+          systemSymbolName: "waveform.path.ecg.text",
+          accessibilityDescription: "Stats"
+        )
+        ?? NSImage(systemSymbolName: "waveform.path.ecg", accessibilityDescription: "Stats")
+    }
+
+    let menu = NSMenu()
+    menu.delegate = self
+    let showHideItem = NSMenuItem(
+      title: "Hide Stats",
+      action: #selector(toggleWindow(_:)),
+      keyEquivalent: ""
+    )
+    showHideItem.target = self
+    menu.addItem(showHideItem)
+    menu.addItem(.separator())
+    menu.addItem(
+      withTitle: "Quit Stats",
+      action: #selector(NSApplication.terminate(_:)),
+      keyEquivalent: "q"
+    )
+    statusItem.menu = menu
+
+    self.showHideMenuItem = showHideItem
+    self.statusItem = statusItem
+  }
+
   private func showMissingExecutableAlert(_ path: String) {
     let alert = NSAlert()
     alert.alertStyle = .critical
@@ -192,7 +244,7 @@ struct StatsApplication {
     let application = NSApplication.shared
     let delegate = AppDelegate()
     application.delegate = delegate
-    application.setActivationPolicy(.regular)
+    application.setActivationPolicy(.accessory)
     application.run()
   }
 }

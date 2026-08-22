@@ -2,6 +2,7 @@
 name: Release
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
@@ -9,51 +10,134 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
-  verify:
+  prepare:
     runs-on: macos-15
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.repository.default_branch || github.ref }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+
+      - name: Prepare version
+        id: release
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            test "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH"
+            git fetch --force --tags origin
+
+            year="$(date -u +%Y)"
+            month="$((10#$(date -u +%m)))"
+            patch=-1
+            while read -r tag; do
+              candidate="${tag##*.}"
+              if [[ "$candidate" =~ ^[0-9]+$ ]] && (( candidate > patch )); then
+                patch="$candidate"
+              fi
+            done < <(git tag --list "v${year}.${month}.*")
+
+            version="${year}.${month}.$((patch + 1))"
+            tag="v${version}"
+            VERSION="$version" python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          version = os.environ["VERSION"]
+          replacements = {
+              "Cargo.toml": (r'(?m)^(version = ")[^"]+("\n)', rf'\g<1>{version}\2'),
+              "Cargo.lock": (
+                  r'(\[\[package\]\]\nname = "stats"\nversion = ")[^"]+',
+                  rf'\g<1>{version}',
+              ),
+          }
+          for name, (pattern, replacement) in replacements.items():
+              path = Path(name)
+              updated, count = re.subn(pattern, replacement, path.read_text(), count=1)
+              if count != 1:
+                  raise SystemExit(f"could not update {name}")
+              path.write_text(updated)
+          PY
+            plutil -replace CFBundleShortVersionString -string "$version" macos/Info.plist
+            plutil -replace CFBundleVersion -string "$version" macos/Info.plist
+          else
+            version="${GITHUB_REF_NAME#v}"
+            tag="$GITHUB_REF_NAME"
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
       - name: Verify source
         run: |
           cargo fmt --check
           cargo clippy --all-targets --locked -- -D warnings
           cargo test --locked
+          swift build --package-path macos
 
       - name: Verify release version
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
           cargo_version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
           app_version="$(plutil -extract CFBundleShortVersionString raw macos/Info.plist)"
           app_build="$(plutil -extract CFBundleVersion raw macos/Info.plist)"
-          test "$version" = "$cargo_version"
-          test "$version" = "$app_version"
-          test "$version" = "$app_build"
+          test "$VERSION" = "$cargo_version"
+          test "$VERSION" = "$app_version"
+          test "$VERSION" = "$app_build"
+
+      - name: Commit and tag version
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml Cargo.lock macos/Info.plist
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: release $TAG"
+          fi
+          git tag --annotate "$TAG" --message "Release $TAG"
+          git push --atomic origin \
+            "HEAD:refs/heads/$DEFAULT_BRANCH" \
+            "$TAG:refs/tags/$TAG"
 
   build:
-    needs: verify
+    needs: prepare
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Build release artifacts
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
           test "$(uname -m)" = arm64
           cargo build --release --locked
           mkdir -p dist/cli
           macos/build-app.sh dist/Stats.app target/release/stats
 
           ditto -c -k --sequesterRsrc --keepParent \
-            dist/Stats.app "dist/Stats-${version}-macOS-arm64.zip"
+            dist/Stats.app "dist/Stats-${VERSION}-macOS-arm64.zip"
 
           cp target/release/stats README.md LICENSE dist/cli/
-          tar -C dist/cli -czf "dist/stats-${version}-macOS-arm64.tar.gz" \
+          tar -C dist/cli -czf "dist/stats-${VERSION}-macOS-arm64.tar.gz" \
             stats README.md LICENSE
           rm -rf dist/cli dist/Stats.app
 
@@ -66,7 +150,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: build
+    needs: [prepare, build]
     runs-on: macos-15
     steps:
       - uses: actions/download-artifact@v4
@@ -77,11 +161,12 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VERSION: ${{ needs.prepare.outputs.version }}
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          gh release create "$GITHUB_REF_NAME" \
+          gh release create "$TAG" \
             dist/*.zip dist/*.tar.gz dist/SHA256SUMS-* \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --generate-notes \
-            --title "Stats $version"
+            --title "Stats $VERSION"
