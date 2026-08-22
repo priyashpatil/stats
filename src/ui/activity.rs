@@ -7,6 +7,8 @@ use ratatui::text::{Line, Span};
 use super::{CODEX_GUTTER_WIDTH, ai_status_row, dim, equal_column_widths, fixed, span};
 use crate::model::{CodexActivitySummary, CodexActivityUsage, DailyTokenUsage, ProviderState};
 
+const ACTIVITY_GUTTER_WIDTH: usize = 4;
+
 #[derive(Debug, Clone)]
 struct ActivityCalendar {
     start_week: NaiveDate,
@@ -55,7 +57,7 @@ pub(super) fn render_codex_activity(
     for day_offset in 0..7 {
         let mut spans = vec![dim(fixed(
             ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][day_offset],
-            CODEX_GUTTER_WIDTH,
+            ACTIVITY_GUTTER_WIDTH,
         ))];
         for week in 0..calendar.weeks {
             if week > 0 {
@@ -91,11 +93,11 @@ pub(super) fn render_codex_activity(
 fn activity_overview_rows(calendar: &ActivityCalendar, width: usize) -> Vec<Line<'static>> {
     let mut stats = vec![
         (
-            "7 days",
+            "7D",
             compact_token_count(activity_period_tokens(calendar, 7)),
         ),
         (
-            "30 days",
+            "30D",
             compact_token_count(activity_period_tokens(calendar, 30)),
         ),
     ];
@@ -119,12 +121,20 @@ fn activity_overview_rows(calendar: &ActivityCalendar, width: usize) -> Vec<Line
             .flatten(),
         );
     }
-    let column_widths = equal_column_widths(width, stats.len());
+    let gap = usize::from(width >= stats.len() * 2 - 1);
+    let column_widths =
+        equal_column_widths(width.saturating_sub(gap * (stats.len() - 1)), stats.len());
     let mut headings = Vec::with_capacity(stats.len());
     let mut values = Vec::with_capacity(stats.len());
-    for ((heading, value), column_width) in stats.into_iter().zip(column_widths) {
-        headings.push(dim(centered(heading, column_width)));
-        values.push(span(centered(&value, column_width), Color::Green, true));
+    for (index, ((heading, value), column_width)) in
+        stats.into_iter().zip(column_widths).enumerate()
+    {
+        if index > 0 {
+            headings.push(Span::raw(" ".repeat(gap)));
+            values.push(Span::raw(" ".repeat(gap)));
+        }
+        headings.push(dim(fixed(heading, column_width)));
+        values.push(span(fixed(&value, column_width), Color::Green, true));
     }
     vec![Line::from(headings), Line::from(values)]
 }
@@ -144,7 +154,8 @@ fn activity_daily_rows(calendar: &ActivityCalendar, width: usize) -> Vec<Line<'s
     if width < 7 {
         return Vec::new();
     }
-    let cell_widths = equal_column_widths(width, 7);
+    let gap = usize::from(width >= 13);
+    let cell_widths = equal_column_widths(width.saturating_sub(gap * 6), 7);
     let first_date = calendar
         .latest_date
         .checked_sub_days(Days::new(6))
@@ -158,34 +169,26 @@ fn activity_daily_rows(calendar: &ActivityCalendar, width: usize) -> Vec<Line<'s
         .collect::<Vec<_>>();
     let mut date_spans = Vec::with_capacity(7);
     let mut value_spans = Vec::with_capacity(7);
-    for (date, cell_width) in dates.into_iter().zip(cell_widths) {
-        let date_label = if cell_width >= 6 {
-            date.format("%b %-d").to_string()
-        } else {
-            date.day().to_string()
-        };
-        date_spans.push(dim(centered(&date_label, cell_width)));
+    for (index, (date, cell_width)) in dates.into_iter().zip(cell_widths).enumerate() {
+        if index > 0 {
+            date_spans.push(Span::raw(" ".repeat(gap)));
+            value_spans.push(Span::raw(" ".repeat(gap)));
+        }
+        let date_label = date.format("%-d/%-m").to_string();
+        date_spans.push(dim(fixed(&date_label, cell_width)));
         let tokens = calendar.tokens_by_date.get(&date).copied().unwrap_or(0);
         if tokens == 0 {
-            value_spans.push(dim(centered("·", cell_width)));
+            value_spans.push(dim(fixed("·", cell_width)));
         } else {
             let color = activity_green(activity_intensity(tokens, calendar.quartiles));
             value_spans.push(span(
-                centered(&compact_token_count(tokens), cell_width),
+                fixed(&compact_token_count(tokens), cell_width),
                 color,
                 true,
             ));
         }
     }
     vec![Line::from(date_spans), Line::from(value_spans)]
-}
-
-fn centered(value: &str, width: usize) -> String {
-    let value = value.chars().take(width).collect::<String>();
-    let padding = width.saturating_sub(value.chars().count());
-    let left = padding / 2;
-    let right = padding - left;
-    format!("{}{}{}", " ".repeat(left), value, " ".repeat(right))
 }
 
 fn compact_token_count(tokens: u64) -> String {
@@ -273,7 +276,7 @@ fn daily_token_usage(usage: &CodexActivityUsage) -> Option<Vec<DailyTokenUsage>>
 }
 
 fn activity_week_capacity(width: usize) -> usize {
-    width.saturating_sub(CODEX_GUTTER_WIDTH).div_ceil(2)
+    width.saturating_sub(ACTIVITY_GUTTER_WIDTH).div_ceil(2)
 }
 
 fn sunday_of_week(date: NaiveDate) -> NaiveDate {
@@ -352,7 +355,7 @@ fn activity_month_labels(calendar: &ActivityCalendar) -> Line<'static> {
         last_label_end = Some(x + label.len());
     }
     Line::from(vec![
-        dim(fixed("", CODEX_GUTTER_WIDTH)),
+        dim(fixed("", ACTIVITY_GUTTER_WIDTH)),
         dim(text.into_iter().collect::<String>()),
     ])
 }
@@ -405,8 +408,8 @@ mod tests {
 
         let calendar = activity_calendar(&usage, 30, date("2026-08-05")).unwrap();
 
-        assert_eq!(calendar.weeks, 11);
-        assert_eq!(calendar.start_week, date("2026-05-24"));
+        assert_eq!(calendar.weeks, 13);
+        assert_eq!(calendar.start_week, date("2026-05-10"));
         assert_eq!(sunday_of_week(calendar.utc_today), date("2026-08-02"));
     }
 
@@ -421,6 +424,7 @@ mod tests {
         render_codex_activity(&mut lines, &state, 30, date("2026-08-01"));
 
         assert_eq!(lines.len(), 14);
+        assert!(line_text(&lines[1]).starts_with("Sun ·"));
         assert!(line_text(&lines[1]).ends_with('▪'));
         assert!(line_text(&lines[7]).ends_with('▪'));
         assert!(
@@ -429,8 +433,8 @@ mod tests {
                 .all(|line| line_text(line).ends_with('·'))
         );
         assert!(line_text(&lines[8]).is_empty());
-        assert!(line_text(&lines[9]).contains("7 days"));
-        assert!(line_text(&lines[10]).contains("30"));
+        assert!(line_text(&lines[9]).contains("7D"));
+        assert!(line_text(&lines[9]).contains("30D"));
         assert!(line_text(&lines[11]).is_empty());
         assert!(line_text(&lines[12]).contains("26"));
         assert!(line_text(&lines[12]).contains('1'));
@@ -480,8 +484,8 @@ mod tests {
 
         let calendar = activity_calendar(&usage, 16, date("2026-08-02")).unwrap();
 
-        assert_eq!(calendar.weeks, 4);
-        assert_eq!(calendar.start_week, date("2026-07-12"));
+        assert_eq!(calendar.weeks, 6);
+        assert_eq!(calendar.start_week, date("2026-06-28"));
     }
 
     #[test]
@@ -513,10 +517,10 @@ mod tests {
         assert_eq!(activity_period_tokens(&calendar, 30), 357_250_000);
         let summary = activity_overview_rows(&calendar, 51);
         assert_eq!(summary.len(), 2);
-        assert_eq!(summary[0].spans[0].content.trim(), "7 days");
-        assert_eq!(summary[0].spans[1].content.trim(), "30 days");
+        assert_eq!(summary[0].spans[0].content.trim(), "7D");
+        assert_eq!(summary[0].spans[2].content.trim(), "30D");
         assert_eq!(summary[1].spans[0].content.trim(), "347M");
-        assert_eq!(summary[1].spans[1].content.trim(), "357M");
+        assert_eq!(summary[1].spans[2].content.trim(), "357M");
     }
 
     #[test]
@@ -545,15 +549,17 @@ mod tests {
 
         let overview = activity_overview_rows(&calendar, 51);
         assert_eq!(overview.len(), 2);
-        assert_eq!(overview[0].spans.len(), 6);
-        assert_eq!(overview[0].spans[2].content.trim(), "Total");
-        assert_eq!(overview[0].spans[3].content.trim(), "Peak");
-        assert_eq!(overview[0].spans[4].content.trim(), "Streak");
-        assert_eq!(overview[0].spans[5].content.trim(), "Best");
-        assert_eq!(overview[1].spans[2].content.trim(), "12.3B");
-        assert_eq!(overview[1].spans[3].content.trim(), "420M");
-        assert_eq!(overview[1].spans[4].content.trim(), "5d");
-        assert_eq!(overview[1].spans[5].content.trim(), "23d");
+        assert_eq!(overview[0].spans.len(), 11);
+        assert_eq!(overview[0].spans[4].content.trim(), "Total");
+        assert_eq!(overview[0].spans[6].content.trim(), "Peak");
+        assert_eq!(overview[0].spans[8].content.trim(), "Streak");
+        assert_eq!(overview[0].spans[10].content.trim(), "Best");
+        assert_eq!(overview[1].spans[4].content.trim(), "12.3B");
+        assert_eq!(overview[1].spans[6].content.trim(), "420M");
+        assert_eq!(overview[1].spans[8].content.trim(), "5d");
+        assert_eq!(overview[1].spans[10].content.trim(), "23d");
+        assert!(overview[0].spans[0].content.starts_with("7D"));
+        assert!(overview[1].spans[0].content.starts_with('2'));
         assert_eq!(
             calendar.summary.unwrap().longest_running_turn_sec,
             Some(9_000)
@@ -607,13 +613,17 @@ mod tests {
 
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().all(|row| line_text(row).chars().count() == 51));
-        assert_eq!(rows[0].spans.len(), 7);
-        assert_eq!(rows[0].spans[0].content.trim(), "Jul 26");
-        assert_eq!(rows[0].spans[6].content.trim(), "Aug 1");
+        assert_eq!(rows[0].spans.len(), 13);
+        assert_eq!(rows[0].spans[0].content.trim(), "26/7");
+        assert_eq!(rows[0].spans[12].content.trim(), "1/8");
         assert_eq!(rows[1].spans[0].content.trim(), "10");
-        assert_eq!(rows[1].spans[6].content.trim(), "70");
+        assert_eq!(rows[1].spans[12].content.trim(), "70");
         assert_eq!(rows[1].spans[0].style.fg, Some(activity_green(1)));
-        assert_eq!(rows[1].spans[6].style.fg, Some(activity_green(4)));
+        assert_eq!(rows[1].spans[12].style.fg, Some(activity_green(4)));
+        for index in (0..13).step_by(2) {
+            assert!(!rows[0].spans[index].content.starts_with(' '));
+            assert!(!rows[1].spans[index].content.starts_with(' '));
+        }
     }
 
     #[test]
@@ -635,9 +645,16 @@ mod tests {
         let rows = activity_daily_rows(&empty_calendar, 22);
 
         assert_eq!(rows.len(), 2);
-        assert!(rows[1].spans.iter().all(|span| {
-            span.content.contains('·') && span.style.add_modifier.contains(Modifier::DIM)
-        }));
+        let dots = rows[1]
+            .spans
+            .iter()
+            .filter(|span| span.content.contains('·'))
+            .collect::<Vec<_>>();
+        assert_eq!(dots.len(), 7);
+        assert!(
+            dots.iter()
+                .all(|span| span.style.add_modifier.contains(Modifier::DIM))
+        );
         assert!(activity_daily_rows(&empty_calendar, 6).is_empty());
     }
 }
