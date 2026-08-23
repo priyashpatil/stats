@@ -140,6 +140,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     }
   }
 
+  @objc private func showAboutWindow(_ sender: Any?) {
+    let version =
+      Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+      ?? "Development"
+    let credits = NSAttributedString(
+      string: "A terminal dashboard for macOS system metrics, Amp usage, and Codex usage."
+    )
+    NSApp.orderFrontStandardAboutPanel(options: [
+      .applicationName: "Stats",
+      .applicationVersion: version,
+      .credits: credits,
+    ])
+    NSApp.activate(ignoringOtherApps: true)
+  }
+
   private func processEnvironment(home: String) -> [String] {
     var environment = ProcessInfo.processInfo.environment
     environment.removeValue(forKey: "NO_COLOR")
@@ -217,6 +232,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     showHideItem.target = self
     menu.addItem(showHideItem)
     menu.addItem(.separator())
+    let aboutItem = NSMenuItem(
+      title: "About Stats",
+      action: #selector(showAboutWindow(_:)),
+      keyEquivalent: ""
+    )
+    aboutItem.target = self
+    menu.addItem(aboutItem)
     menu.addItem(
       withTitle: "Quit Stats",
       action: #selector(NSApplication.terminate(_:)),
