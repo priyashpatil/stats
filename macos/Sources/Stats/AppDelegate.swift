@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 {
   private let clockPreferences = ClockPreferences()
   private let launchAtLoginController = LaunchAtLoginController()
+  private let terminalPreferences = TerminalPreferences()
   private let windowPlacementStore = WindowPlacementStore()
   private var executable: String?
   private var home: String?
@@ -73,9 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     window.backgroundColor = background
 
     let terminalFrame = (window.contentView?.bounds ?? .zero).insetBy(dx: 16, dy: 16)
-    let font =
-      NSFont(name: "JetBrainsMonoNL-Regular", size: 15)
-      ?? NSFont.monospacedSystemFont(ofSize: 15, weight: .regular)
+    let font = terminalFont(size: terminalPreferences.fontSize)
     let terminal = LocalProcessTerminalView(
       frame: terminalFrame,
       font: font,
@@ -189,8 +188,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     let controller = SettingsWindowController(
       selectedClockChoices: clockPreferences.selectedChoices,
       launchesAtLogin: launchAtLoginController.isEnabled,
+      fontSize: terminalPreferences.fontSize,
       onLaunchAtLoginChange: { [launchAtLoginController] enabled in
         launchAtLoginController.setEnabled(enabled)
+      },
+      onFontSizeChange: { [weak self] fontSize in
+        guard let self else { return }
+        self.terminalPreferences.saveFontSize(fontSize)
+        self.terminal?.font = self.terminalFont(size: fontSize)
       },
       onClockChoicesChange: { [weak self] choices in
         guard let self else { return }
@@ -202,6 +207,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     controller.showWindow(nil)
     controller.window?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
+  }
+
+  private func terminalFont(size: Int) -> NSFont {
+    NSFont(name: "JetBrainsMonoNL-Regular", size: CGFloat(size))
+      ?? NSFont.monospacedSystemFont(ofSize: CGFloat(size), weight: .regular)
   }
 
   private func processEnvironment(home: String) -> [String] {
