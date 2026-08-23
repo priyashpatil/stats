@@ -5,26 +5,347 @@ private struct ClockChoice: Codable {
   let label: String
   let timezone: String
 
-  static let defaults = ["Asia/Kolkata", "Europe/Paris", "Australia/Sydney", "America/Los_Angeles"]
-  static let all = [
-    ClockChoice(label: "Honolulu", timezone: "Pacific/Honolulu"),
-    ClockChoice(label: "Seattle", timezone: "America/Los_Angeles"),
-    ClockChoice(label: "Denver", timezone: "America/Denver"),
-    ClockChoice(label: "Chicago", timezone: "America/Chicago"),
-    ClockChoice(label: "New York", timezone: "America/New_York"),
-    ClockChoice(label: "São Paulo", timezone: "America/Sao_Paulo"),
-    ClockChoice(label: "London", timezone: "Europe/London"),
-    ClockChoice(label: "Paris", timezone: "Europe/Paris"),
-    ClockChoice(label: "Berlin", timezone: "Europe/Berlin"),
-    ClockChoice(label: "Cairo", timezone: "Africa/Cairo"),
-    ClockChoice(label: "Cape Town", timezone: "Africa/Johannesburg"),
-    ClockChoice(label: "Dubai", timezone: "Asia/Dubai"),
+  var id: String { "\(label)|\(timezone)" }
+
+  static let defaults = [
     ClockChoice(label: "Mumbai", timezone: "Asia/Kolkata"),
-    ClockChoice(label: "Singapore", timezone: "Asia/Singapore"),
-    ClockChoice(label: "Tokyo", timezone: "Asia/Tokyo"),
+    ClockChoice(label: "Paris", timezone: "Europe/Paris"),
     ClockChoice(label: "Sydney", timezone: "Australia/Sydney"),
-    ClockChoice(label: "Auckland", timezone: "Pacific/Auckland"),
+    ClockChoice(label: "Seattle", timezone: "America/Los_Angeles"),
   ]
+
+  static let all: [ClockChoice] = {
+    let aliases = [
+      ClockChoice(label: "Abu Dhabi", timezone: "Asia/Dubai"),
+      ClockChoice(label: "Atlanta", timezone: "America/New_York"),
+      ClockChoice(label: "Austin", timezone: "America/Chicago"),
+      ClockChoice(label: "Barcelona", timezone: "Europe/Madrid"),
+      ClockChoice(label: "Beijing", timezone: "Asia/Shanghai"),
+      ClockChoice(label: "Bengaluru", timezone: "Asia/Kolkata"),
+      ClockChoice(label: "Boston", timezone: "America/New_York"),
+      ClockChoice(label: "Brasília", timezone: "America/Sao_Paulo"),
+      ClockChoice(label: "Canberra", timezone: "Australia/Sydney"),
+      ClockChoice(label: "Cape Town", timezone: "Africa/Johannesburg"),
+      ClockChoice(label: "Chennai", timezone: "Asia/Kolkata"),
+      ClockChoice(label: "Dallas", timezone: "America/Chicago"),
+      ClockChoice(label: "Delhi", timezone: "Asia/Kolkata"),
+      ClockChoice(label: "Guangzhou", timezone: "Asia/Shanghai"),
+      ClockChoice(label: "Houston", timezone: "America/Chicago"),
+      ClockChoice(label: "Hyderabad", timezone: "Asia/Kolkata"),
+      ClockChoice(label: "Islamabad", timezone: "Asia/Karachi"),
+      ClockChoice(label: "Lahore", timezone: "Asia/Karachi"),
+      ClockChoice(label: "Las Vegas", timezone: "America/Los_Angeles"),
+      ClockChoice(label: "Los Angeles", timezone: "America/Los_Angeles"),
+      ClockChoice(label: "Miami", timezone: "America/New_York"),
+      ClockChoice(label: "Milan", timezone: "Europe/Rome"),
+      ClockChoice(label: "Mumbai", timezone: "Asia/Kolkata"),
+      ClockChoice(label: "Munich", timezone: "Europe/Berlin"),
+      ClockChoice(label: "Osaka", timezone: "Asia/Tokyo"),
+      ClockChoice(label: "Philadelphia", timezone: "America/New_York"),
+      ClockChoice(label: "Portland", timezone: "America/Los_Angeles"),
+      ClockChoice(label: "Rio de Janeiro", timezone: "America/Sao_Paulo"),
+      ClockChoice(label: "San Diego", timezone: "America/Los_Angeles"),
+      ClockChoice(label: "San Francisco", timezone: "America/Los_Angeles"),
+      ClockChoice(label: "Seattle", timezone: "America/Los_Angeles"),
+      ClockChoice(label: "Shenzhen", timezone: "Asia/Shanghai"),
+      ClockChoice(label: "São Paulo", timezone: "America/Sao_Paulo"),
+      ClockChoice(label: "Washington, D.C.", timezone: "America/New_York"),
+      ClockChoice(label: "Wellington", timezone: "Pacific/Auckland"),
+    ]
+    let geographicPrefixes = [
+      "Africa/", "America/", "Antarctica/", "Arctic/", "Asia/", "Atlantic/",
+      "Australia/", "Europe/", "Indian/", "Pacific/",
+    ]
+    let timezoneCities = TimeZone.knownTimeZoneIdentifiers.compactMap { timezone -> ClockChoice? in
+      guard geographicPrefixes.contains(where: { timezone.hasPrefix($0) }),
+        let city = timezone.split(separator: "/").last
+      else {
+        return nil
+      }
+      return ClockChoice(
+        label: city.replacingOccurrences(of: "_", with: " "),
+        timezone: timezone
+      )
+    }
+    var seen: Set<String> = []
+    return (aliases + timezoneCities)
+      .filter {
+        let id = $0.id.folding(
+          options: [.caseInsensitive, .diacriticInsensitive],
+          locale: Locale(identifier: "en_US_POSIX")
+        )
+        return seen.insert(id).inserted
+      }
+      .sorted {
+        let comparison = $0.label.localizedStandardCompare($1.label)
+        return comparison == .orderedSame
+          ? $0.timezone < $1.timezone : comparison == .orderedAscending
+      }
+  }()
+
+  static func choice(forLegacyTimezone timezone: String) -> ClockChoice? {
+    let legacyLabels = [
+      "Africa/Johannesburg": "Cape Town",
+      "America/Chicago": "Chicago",
+      "America/Los_Angeles": "Seattle",
+      "America/New_York": "New York",
+      "America/Sao_Paulo": "São Paulo",
+      "Asia/Dubai": "Dubai",
+      "Asia/Karachi": "Karachi",
+      "Asia/Kolkata": "Mumbai",
+      "Asia/Shanghai": "Shanghai",
+      "Asia/Tokyo": "Tokyo",
+      "Australia/Sydney": "Sydney",
+      "Europe/Berlin": "Berlin",
+      "Europe/Madrid": "Madrid",
+      "Europe/Rome": "Rome",
+      "Pacific/Auckland": "Auckland",
+    ]
+    if let label = legacyLabels[timezone],
+      let choice = all.first(where: { $0.label == label && $0.timezone == timezone })
+    {
+      return choice
+    }
+    return all.first(where: { $0.timezone == timezone })
+  }
+
+  func title(at date: Date) -> String {
+    let formatter = DateFormatter()
+    formatter.locale = Locale.current
+    formatter.dateFormat = "EEE h:mm a"
+    formatter.timeZone = TimeZone(identifier: timezone)
+    return "\(label) — \(formatter.string(from: date)) — \(timezone)"
+  }
+}
+
+@MainActor
+private final class AboutViewController: NSViewController {
+  override func loadView() {
+    preferredContentSize = NSSize(width: 520, height: 400)
+    view = NSView(frame: NSRect(origin: .zero, size: preferredContentSize))
+
+    let icon = NSImageView()
+    icon.image = NSApp.applicationIconImage
+    icon.imageScaling = .scaleProportionallyUpOrDown
+    icon.translatesAutoresizingMaskIntoConstraints = false
+    NSLayoutConstraint.activate([
+      icon.widthAnchor.constraint(equalToConstant: 96),
+      icon.heightAnchor.constraint(equalToConstant: 96),
+    ])
+
+    let name = NSTextField(labelWithString: "Stats")
+    name.font = .systemFont(ofSize: 24, weight: .semibold)
+    let version =
+      Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+      ?? "Development"
+    let versionLabel = NSTextField(labelWithString: "Version \(version)")
+    versionLabel.textColor = .secondaryLabelColor
+    let description = NSTextField(
+      wrappingLabelWithString: "A terminal dashboard for macOS system metrics, Amp usage, and Codex usage."
+    )
+    description.alignment = .center
+    description.textColor = .secondaryLabelColor
+    description.maximumNumberOfLines = 2
+    description.preferredMaxLayoutWidth = 360
+    description.widthAnchor.constraint(equalToConstant: 360).isActive = true
+
+    let changelogButton = NSButton(
+      title: "Changelog",
+      target: self,
+      action: #selector(openChangelog(_:))
+    )
+    changelogButton.bezelStyle = .rounded
+
+    let stack = NSStackView(views: [icon, name, versionLabel, description, changelogButton])
+    stack.orientation = .vertical
+    stack.alignment = .centerX
+    stack.spacing = 8
+    stack.setCustomSpacing(14, after: versionLabel)
+    stack.setCustomSpacing(16, after: description)
+    stack.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(stack)
+    NSLayoutConstraint.activate([
+      stack.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+      stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 48),
+    ])
+  }
+
+  @objc private func openChangelog(_ sender: NSButton) {
+    NSWorkspace.shared.open(URL(string: "https://github.com/priyashpatil/stats/releases")!)
+  }
+}
+
+@MainActor
+private final class ClockPickerButton: NSPopUpButton {
+  var onOpen: ((ClockPickerButton) -> Void)?
+
+  override func mouseDown(with event: NSEvent) {
+    onOpen?(self)
+  }
+}
+
+@MainActor
+private final class ClockPickerViewController: NSViewController, NSTableViewDataSource,
+  NSTableViewDelegate, NSSearchFieldDelegate
+{
+  private let choices = ClockChoice.all
+  private var filteredChoices = ClockChoice.all
+  private let onSelect: (ClockChoice) -> Void
+  private let searchField = NSSearchField()
+  private let tableView = NSTableView()
+  private let titles = ClockChoice.all.map { $0.title(at: Date()) }
+
+  init(onSelect: @escaping (ClockChoice) -> Void) {
+    self.onSelect = onSelect
+    super.init(nibName: nil, bundle: nil)
+  }
+
+  required init?(coder: NSCoder) {
+    fatalError("init(coder:) has not been implemented")
+  }
+
+  override func loadView() {
+    view = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 320))
+
+    searchField.placeholderString = "Search cities or time zones"
+    searchField.delegate = self
+    searchField.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(searchField)
+
+    let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("ClockCity"))
+    column.width = 344
+    tableView.addTableColumn(column)
+    tableView.headerView = nil
+    tableView.rowHeight = 26
+    tableView.intercellSpacing = NSSize(width: 0, height: 0)
+    tableView.dataSource = self
+    tableView.delegate = self
+    tableView.target = self
+    tableView.action = #selector(selectTableRow(_:))
+
+    let scrollView = NSScrollView()
+    scrollView.documentView = tableView
+    scrollView.hasVerticalScroller = true
+    scrollView.drawsBackground = false
+    scrollView.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(scrollView)
+
+    NSLayoutConstraint.activate([
+      searchField.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
+      searchField.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
+      searchField.topAnchor.constraint(equalTo: view.topAnchor, constant: 8),
+      scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+      scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+      scrollView.topAnchor.constraint(equalTo: searchField.bottomAnchor, constant: 6),
+      scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+    ])
+  }
+
+  override func viewDidAppear() {
+    super.viewDidAppear()
+    view.window?.makeFirstResponder(searchField)
+  }
+
+  func numberOfRows(in tableView: NSTableView) -> Int {
+    filteredChoices.count
+  }
+
+  func tableView(
+    _ tableView: NSTableView,
+    viewFor tableColumn: NSTableColumn?,
+    row: Int
+  ) -> NSView? {
+    let choice = filteredChoices[row]
+    let label = NSTextField(labelWithString: title(for: choice))
+    label.lineBreakMode = .byTruncatingTail
+    label.translatesAutoresizingMaskIntoConstraints = false
+    let cell = NSTableCellView()
+    cell.addSubview(label)
+    NSLayoutConstraint.activate([
+      label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
+      label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
+      label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+    ])
+    return cell
+  }
+
+  func controlTextDidChange(_ notification: Notification) {
+    let query = normalized(searchField.stringValue)
+    filteredChoices = choices.filter {
+      query.isEmpty || normalized($0.label).contains(query)
+        || normalized($0.timezone).contains(query)
+    }
+    tableView.reloadData()
+  }
+
+  func control(
+    _ control: NSControl,
+    textView: NSTextView,
+    doCommandBy commandSelector: Selector
+  ) -> Bool {
+    if commandSelector == #selector(NSResponder.moveDown(_:)) {
+      moveSelection(by: 1)
+      return true
+    }
+    if commandSelector == #selector(NSResponder.moveUp(_:)) {
+      moveSelection(by: -1)
+      return true
+    }
+    if commandSelector == #selector(NSResponder.insertNewline(_:))
+      || commandSelector == #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:))
+    {
+      commitSelectedChoice()
+      return true
+    }
+    if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+      view.window?.close()
+      return true
+    }
+    return false
+  }
+
+  @objc private func selectTableRow(_ sender: NSTableView) {
+    commitSelectedChoice()
+  }
+
+  private func commitSelectedChoice() {
+    let row = tableView.selectedRow >= 0 ? tableView.selectedRow : 0
+    guard filteredChoices.indices.contains(row) else { return }
+    onSelect(filteredChoices[row])
+  }
+
+  private func moveSelection(by offset: Int) {
+    guard !filteredChoices.isEmpty else { return }
+    let currentRow = tableView.selectedRow
+    let nextRow =
+      currentRow < 0
+      ? (offset > 0 ? 0 : filteredChoices.count - 1)
+      : min(max(currentRow + offset, 0), filteredChoices.count - 1)
+    tableView.selectRowIndexes(IndexSet(integer: nextRow), byExtendingSelection: false)
+    tableView.scrollRowToVisible(nextRow)
+  }
+
+  private func title(for choice: ClockChoice) -> String {
+    guard let index = choices.firstIndex(where: { $0.id == choice.id }) else { return choice.label }
+    return titles[index]
+  }
+
+  private func normalized(_ value: String) -> String {
+    value.folding(
+      options: [.caseInsensitive, .diacriticInsensitive],
+      locale: Locale.current
+    )
+  }
+}
+
+@MainActor
+private final class ClockPickerPanel: NSPanel {
+  override var canBecomeKey: Bool { true }
+
+  override func resignKey() {
+    super.resignKey()
+    close()
+  }
 }
 
 @MainActor
@@ -39,18 +360,22 @@ private final class SettingsWindowController: NSWindowController, NSTableViewDat
     (title: "About", symbol: "info.circle"),
   ]
   private let sidebarTable = NSTableView()
-  private var timezonePopups: [NSPopUpButton] = []
+  private let clockMenuWidth: CGFloat = 360
+  private var clockPickerPanel: ClockPickerPanel?
+  private var selectedClockChoices: [ClockChoice]
+  private var timezonePopups: [ClockPickerButton] = []
   private let onLaunchAtLoginChange: (Bool) -> Bool
-  private let onTimezonesChange: ([String]) -> Void
+  private let onClockChoicesChange: ([ClockChoice]) -> Void
 
   init(
-    selectedTimezones: [String],
+    selectedClockChoices: [ClockChoice],
     launchesAtLogin: Bool,
     onLaunchAtLoginChange: @escaping (Bool) -> Bool,
-    onTimezonesChange: @escaping ([String]) -> Void
+    onClockChoicesChange: @escaping ([ClockChoice]) -> Void
   ) {
+    self.selectedClockChoices = selectedClockChoices
     self.onLaunchAtLoginChange = onLaunchAtLoginChange
-    self.onTimezonesChange = onTimezonesChange
+    self.onClockChoicesChange = onClockChoicesChange
     let window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 720, height: 440),
       styleMask: [.titled, .closable, .resizable],
@@ -61,18 +386,18 @@ private final class SettingsWindowController: NSWindowController, NSTableViewDat
     window.title = "Stats Settings"
     window.isReleasedWhenClosed = false
     window.center()
-    configureContent(selectedTimezones: selectedTimezones, launchesAtLogin: launchesAtLogin)
+    configureContent(selectedClockChoices: selectedClockChoices, launchesAtLogin: launchesAtLogin)
   }
 
   required init?(coder: NSCoder) {
     fatalError("init(coder:) has not been implemented")
   }
 
-  private func configureContent(selectedTimezones: [String], launchesAtLogin: Bool) {
+  private func configureContent(selectedClockChoices: [ClockChoice], launchesAtLogin: Bool) {
     panes = [
       generalViewController(launchesAtLogin: launchesAtLogin),
-      clocksViewController(selectedTimezones: selectedTimezones),
-      aboutViewController(),
+      clocksViewController(selectedClockChoices: selectedClockChoices),
+      AboutViewController(),
     ]
 
     let sidebarController = NSViewController()
@@ -168,13 +493,14 @@ private final class SettingsWindowController: NSWindowController, NSTableViewDat
     return controller
   }
 
-  private func clocksViewController(selectedTimezones: [String]) -> NSViewController {
+  private func clocksViewController(selectedClockChoices: [ClockChoice]) -> NSViewController {
     let controller = settingsPane()
 
     let title = NSTextField(labelWithString: "Clocks")
     title.font = .systemFont(ofSize: 22, weight: .semibold)
     let help = NSTextField(
-      wrappingLabelWithString: "Choose the time zone displayed in each of the four clock slots."
+      wrappingLabelWithString:
+        "Type a city or time zone in any clock field, then choose a matching city."
     )
     help.textColor = .secondaryLabelColor
 
@@ -182,18 +508,13 @@ private final class SettingsWindowController: NSWindowController, NSTableViewDat
     for slot in 0..<4 {
       let label = NSTextField(labelWithString: "Clock \(slot + 1):")
       label.alignment = .left
-      let popup = NSPopUpButton(frame: .zero, pullsDown: false)
-      popup.addItems(
-        withTitles: ClockChoice.all.map { "\($0.label) — \($0.timezone)" }
-      )
-      if let selectedIndex = ClockChoice.all.firstIndex(where: {
-        $0.timezone == selectedTimezones[slot]
-      }) {
-        popup.selectItem(at: selectedIndex)
+      let popup = ClockPickerButton(frame: .zero, pullsDown: false)
+      popup.addItem(withTitle: selectedClockChoices[slot].title(at: Date()))
+      popup.onOpen = { [weak self] popup in
+        self?.showClockPicker(for: popup, slot: slot)
       }
-      popup.target = self
-      popup.action = #selector(timezoneChanged(_:))
-      popup.widthAnchor.constraint(greaterThanOrEqualToConstant: 300).isActive = true
+      popup.cell?.lineBreakMode = .byTruncatingTail
+      popup.widthAnchor.constraint(equalToConstant: clockMenuWidth).isActive = true
       timezonePopups.append(popup)
       rows.append([label, popup])
     }
@@ -204,7 +525,7 @@ private final class SettingsWindowController: NSWindowController, NSTableViewDat
     grid.column(at: 0).xPlacement = .leading
     grid.column(at: 0).width = 72
     grid.column(at: 1).xPlacement = .fill
-    grid.column(at: 1).width = 320
+    grid.column(at: 1).width = 360
 
     let stack = NSStackView(views: [title, help, grid])
     stack.orientation = .vertical
@@ -213,47 +534,6 @@ private final class SettingsWindowController: NSWindowController, NSTableViewDat
     stack.setCustomSpacing(8, after: title)
     stack.setCustomSpacing(20, after: help)
     install(stack, in: controller.view)
-    return controller
-  }
-
-  private func aboutViewController() -> NSViewController {
-    let controller = settingsPane()
-    let icon = NSImageView()
-    icon.image = NSApp.applicationIconImage
-    icon.imageScaling = .scaleProportionallyUpOrDown
-    icon.translatesAutoresizingMaskIntoConstraints = false
-    NSLayoutConstraint.activate([
-      icon.widthAnchor.constraint(equalToConstant: 96),
-      icon.heightAnchor.constraint(equalToConstant: 96),
-    ])
-
-    let name = NSTextField(labelWithString: "Stats")
-    name.font = .systemFont(ofSize: 24, weight: .semibold)
-    let version =
-      Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-      ?? "Development"
-    let versionLabel = NSTextField(labelWithString: "Version \(version)")
-    versionLabel.textColor = .secondaryLabelColor
-    let description = NSTextField(
-      wrappingLabelWithString: "A terminal dashboard for macOS system metrics, Amp usage, and Codex usage."
-    )
-    description.alignment = .center
-    description.textColor = .secondaryLabelColor
-    description.maximumNumberOfLines = 2
-    description.preferredMaxLayoutWidth = 360
-    description.widthAnchor.constraint(equalToConstant: 360).isActive = true
-
-    let stack = NSStackView(views: [icon, name, versionLabel, description])
-    stack.orientation = .vertical
-    stack.alignment = .centerX
-    stack.spacing = 8
-    stack.setCustomSpacing(14, after: versionLabel)
-    stack.translatesAutoresizingMaskIntoConstraints = false
-    controller.view.addSubview(stack)
-    NSLayoutConstraint.activate([
-      stack.centerXAnchor.constraint(equalTo: controller.view.centerXAnchor),
-      stack.topAnchor.constraint(equalTo: controller.view.topAnchor, constant: 48),
-    ])
     return controller
   }
 
@@ -333,24 +613,53 @@ private final class SettingsWindowController: NSWindowController, NSTableViewDat
     sender.state = onLaunchAtLoginChange(requested) ? .on : .off
   }
 
-  @objc private func timezoneChanged(_ sender: NSPopUpButton) {
-    let timezones = timezonePopups.map { popup in
-      ClockChoice.all[popup.indexOfSelectedItem].timezone
+  private func showClockPicker(for popup: ClockPickerButton, slot: Int) {
+    let picker = ClockPickerViewController { [weak self, weak popup] choice in
+      guard let self, let popup else { return }
+      self.selectedClockChoices[slot] = choice
+      popup.item(at: 0)?.title = choice.title(at: Date())
+      self.clockPickerPanel?.close()
+      self.onClockChoicesChange(self.selectedClockChoices)
     }
-    onTimezonesChange(timezones)
+    guard let window = popup.window else { return }
+    let anchor = window.convertToScreen(popup.convert(popup.bounds, to: nil))
+    let panel = ClockPickerPanel(
+      contentRect: NSRect(
+        x: anchor.minX,
+        y: anchor.minY - 320,
+        width: clockMenuWidth,
+        height: 320
+      ),
+      styleMask: .borderless,
+      backing: .buffered,
+      defer: false
+    )
+    panel.isReleasedWhenClosed = false
+    panel.hasShadow = true
+    panel.backgroundColor = .windowBackgroundColor
+    panel.contentViewController = picker
+    panel.contentView?.wantsLayer = true
+    panel.contentView?.layer?.cornerRadius = 8
+    panel.contentView?.layer?.masksToBounds = true
+    clockPickerPanel?.close()
+    clockPickerPanel = panel
+    panel.makeKeyAndOrderFront(nil)
   }
+
 }
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   NSMenuDelegate, @preconcurrency LocalProcessTerminalViewDelegate
 {
-  private let clocksDefaultsKey = "selectedClockTimezones"
+  private let clocksDefaultsKey = "selectedClockCities"
+  private let legacyClocksDefaultsKey = "selectedClockTimezones"
   private let launchAgentLabel = "com.priyashpatil.stats"
   private let windowPlacementDefaultsKey = "mainWindowPlacement"
   private var executable: String?
   private var home: String?
   private var isRestartingTerminal = false
+  private var aboutWindowController: NSWindowController?
   private var settingsWindowController: SettingsWindowController?
   private var showHideMenuItem: NSMenuItem?
   private var statusItem: NSStatusItem?
@@ -500,17 +809,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   @objc private func showAboutWindow(_ sender: Any?) {
-    let version =
-      Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-      ?? "Development"
-    let credits = NSAttributedString(
-      string: "A terminal dashboard for macOS system metrics, Amp usage, and Codex usage."
-    )
-    NSApp.orderFrontStandardAboutPanel(options: [
-      .applicationName: "Stats",
-      .applicationVersion: version,
-      .credits: credits,
-    ])
+    if aboutWindowController == nil {
+      let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 520, height: 400),
+        styleMask: [.titled, .closable],
+        backing: .buffered,
+        defer: false
+      )
+      window.title = "About Stats"
+      window.isReleasedWhenClosed = false
+      window.contentViewController = AboutViewController()
+      window.center()
+      aboutWindowController = NSWindowController(window: window)
+    }
+    aboutWindowController?.showWindow(nil)
+    aboutWindowController?.window?.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
   }
 
@@ -522,14 +835,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       return
     }
     let controller = SettingsWindowController(
-      selectedTimezones: selectedClockTimezones,
+      selectedClockChoices: selectedClockChoices,
       launchesAtLogin: launchesAtLogin,
       onLaunchAtLoginChange: { [weak self] enabled in
         self?.setLaunchAtLogin(enabled) ?? false
       },
-      onTimezonesChange: { [weak self] timezones in
+      onClockChoicesChange: { [weak self] choices in
         guard let self else { return }
-        UserDefaults.standard.set(timezones, forKey: self.clocksDefaultsKey)
+        UserDefaults.standard.set(choices.map(\.id), forKey: self.clocksDefaultsKey)
         self.restartTerminal()
       }
     )
@@ -545,9 +858,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     environment["HOME"] = home
     environment["TERM"] = "xterm-256color"
     environment["COLORTERM"] = "truecolor"
-    let clocks = selectedClockTimezones.compactMap { timezone in
-      ClockChoice.all.first(where: { $0.timezone == timezone })
-    }
+    let clocks = selectedClockChoices
     if let data = try? JSONEncoder().encode(clocks),
       let value = String(data: data, encoding: .utf8)
     {
@@ -567,17 +878,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     return environment.map { "\($0.key)=\($0.value)" }
   }
 
-  private var selectedClockTimezones: [String] {
-    let stored = UserDefaults.standard.stringArray(forKey: clocksDefaultsKey) ?? ClockChoice.defaults
-    var valid = stored.filter { timezone in
-      ClockChoice.all.contains(where: { $0.timezone == timezone })
+  private var selectedClockChoices: [ClockChoice] {
+    let storedIDs = UserDefaults.standard.stringArray(forKey: clocksDefaultsKey)
+    var choices =
+      storedIDs?.compactMap { id in
+        ClockChoice.all.first(where: { $0.id == id })
+      } ?? []
+    if storedIDs == nil {
+      choices =
+        UserDefaults.standard.stringArray(forKey: legacyClocksDefaultsKey)?
+        .compactMap(ClockChoice.choice(forLegacyTimezone:)) ?? []
     }
-    for timezone in ClockChoice.defaults where valid.count < 4 {
-      if !valid.contains(timezone) {
-        valid.append(timezone)
+    for choice in ClockChoice.defaults where choices.count < 4 {
+      if !choices.contains(where: { $0.id == choice.id }) {
+        choices.append(choice)
       }
     }
-    return Array(valid.prefix(4))
+    return Array(choices.prefix(4))
   }
 
   private var launchesAtLogin: Bool {
