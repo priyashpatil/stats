@@ -1,43 +1,36 @@
 # Stats
 
-A terminal dashboard for macOS system metrics, Amp usage, and Codex usage. It can run directly in a terminal or inside the included native macOS wrapper.
+Stats is a lightweight dashboard for your Mac's system health, Amp usage, and Codex usage. Use it as a native menu bar app or run it directly in a terminal.
 
 <p align="center">
   <img src="https://cdn.priyashpatil.com/products/stats-app-22-08-26.gif" alt="Stats dashboard demo">
 </p>
 
-## Features
+## What it shows
 
 - CPU, RAM, GPU, storage, and network metrics
 - Amp subscription usage
 - Codex weekly quota and token activity
-- World clocks
-- Native macOS window powered by SwiftTerm
-- `--once` output for scripts
+- Four customizable world clocks
 
 Stats reads usage through the installed Amp and Codex CLIs. It does not read or store their credentials.
 
-## Requirements
-
-- macOS 11 or newer for the native app
-- [Amp](https://ampcode.com/) installed and signed in
-- [Codex CLI](https://github.com/openai/codex) installed and signed in
-
 ## Install
 
-### Homebrew
+Stats requires macOS 11 or newer and currently provides prebuilt releases for Apple Silicon Macs. [Amp](https://ampcode.com/) and the [Codex CLI](https://github.com/openai/codex) must also be installed and signed in.
 
-Install the self-contained macOS app:
+### Homebrew (recommended)
+
+Copy and paste this command into Terminal:
 
 ```sh
 brew install --cask priyashpatil/tap/stats &&
   xattr -dr com.apple.quarantine /Applications/Stats.app
 ```
 
-Releases are ad-hoc signed but not Apple-notarized. The second command explicitly
-removes macOS quarantine after Homebrew downloads and verifies the cask.
+The second command allows macOS to open the app after Homebrew has downloaded and verified it.
 
-### Download the macOS app
+### Download
 
 1. Open the [latest release](https://github.com/priyashpatil/stats/releases/latest).
 2. Download the `Stats-...-macOS-arm64.zip` file for Apple Silicon.
@@ -45,51 +38,31 @@ removes macOS quarantine after Homebrew downloads and verifies the cask.
 
 The downloaded app is self-contained and does not require Rust or Swift. Releases are ad-hoc signed but not Apple-notarized, so macOS may ask you to confirm the first launch in **System Settings → Privacy & Security**.
 
-### Build from source
+## Getting started
 
-Install Rust with Cargo and Swift 6.1 or newer, then clone the repository and run:
+1. Open Stats from your Applications folder. The dashboard appears and a Stats icon is added to the menu bar.
+2. Use the menu bar icon to show or hide the dashboard, open **Settings**, or quit Stats.
+3. In **Settings → General**, choose whether Stats should launch when you sign in.
+4. In **Settings → Clocks**, search for a city or time zone for each of the four clocks.
 
-```sh
-./install.sh
-```
+You can move and resize the dashboard. Stats remembers its position and restores it on the primary desktop the next time it opens.
 
-The installer:
+## Terminal use
 
-- installs `stats`, `codex-usage`, and `codex-usage-status` in `~/.cargo/bin`
-- builds and installs `~/Applications/Stats.app`
-- starts the app and enables it at login with a user LaunchAgent
-
-To install only the terminal app, including on other Unix platforms:
+If you prefer a terminal, install the CLI with Cargo:
 
 ```sh
-cargo install --path . --locked
+cargo install --git https://github.com/priyashpatil/stats --locked
+stats
 ```
 
-The AI usage sections require both `amp` and `codex` to be available in `PATH`.
+Press `q` or Escape to quit. For a single, script-friendly snapshot, run:
 
-## Releases and versioning
-
-Stats uses Calendar Versioning in the form `YYYY.M.PATCH`. The first release in a month uses patch `0`; subsequent fixes increment it. For example, `2026.8.1` is the first patch to the August 2026 release.
-
-To publish a release, run the **Release** workflow from the repository's default branch. It calculates the next CalVer version, updates and commits the Cargo package and app bundle versions, creates the matching tag, builds a self-contained macOS app and CLI archive for Apple Silicon, and publishes them to GitHub Releases with SHA-256 checksums.
-
-Pushing a tag manually remains supported. In that case, the tag, Cargo package, and app bundle versions must match.
-
-## Usage
-
-```text
-stats [OPTIONS]
-
-Options:
-      --codex-usage-status
-  -i, --interval <seconds>
-      --once
-      --amp-interval <seconds>
-      --storage-interval <seconds>
-  -h, --help
+```sh
+stats --once
 ```
 
-Press `q` or Escape to quit the interactive dashboard.
+Run `stats --help` to see all CLI options. The AI usage sections require both `amp` and `codex` to be available in `PATH`.
 
 GPU utilization uses the `ioreg` metrics provided by macOS and requires no elevated permissions.
 
@@ -101,14 +74,9 @@ GPU utilization uses the `ioreg` metrics provided by macOS and requires no eleva
 
 To report a security issue, see [SECURITY.md](SECURITY.md).
 
-## Development
+## Contributing
 
-```sh
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test --locked
-swift test --package-path macos
-```
+Want to build Stats from source or help improve it? See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, testing, and release details.
 
 ## License
 
