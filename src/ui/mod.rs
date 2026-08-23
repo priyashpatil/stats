@@ -17,14 +17,21 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
 use ratatui::{Frame, Terminal};
+use serde::Deserialize;
 use serde_json::Value;
 
-const CLOCKS: &[(&str, &str)] = &[
+const DEFAULT_CLOCKS: &[(&str, &str)] = &[
     ("Mumbai", "Asia/Kolkata"),
     ("Paris", "Europe/Paris"),
     ("Sydney", "Australia/Sydney"),
     ("Seattle", "America/Los_Angeles"),
 ];
+
+#[derive(Debug, Clone, Deserialize)]
+struct Clock {
+    label: String,
+    timezone: String,
+}
 
 const BAR_FILLED: &str = "━";
 const BAR_EMPTY: &str = "·";
@@ -54,6 +61,7 @@ mod activity;
 use activity::render_codex_activity;
 
 pub(crate) fn run_tui(state: &Arc<Mutex<AppState>>, stop: &Arc<AtomicBool>) -> Result<(), String> {
+    let clocks = configured_clocks();
     enable_raw_mode().map_err(|err| err.to_string())?;
     let mut stdout = io::stdout();
     execute!(
@@ -70,7 +78,7 @@ pub(crate) fn run_tui(state: &Arc<Mutex<AppState>>, stop: &Arc<AtomicBool>) -> R
     let mut terminal = Terminal::new(backend).map_err(|err| err.to_string())?;
     let result = loop {
         terminal
-            .draw(|frame| draw(frame, state))
+            .draw(|frame| draw(frame, state, &clocks))
             .map_err(|err| err.to_string())?;
         if event::poll(Duration::from_millis(200)).map_err(|err| err.to_string())?
             && let Event::Key(key) = event::read().map_err(|err| err.to_string())?
@@ -98,17 +106,17 @@ pub(crate) fn run_tui(state: &Arc<Mutex<AppState>>, stop: &Arc<AtomicBool>) -> R
     result
 }
 
-fn draw(frame: &mut Frame, state: &Arc<Mutex<AppState>>) {
+fn draw(frame: &mut Frame, state: &Arc<Mutex<AppState>>, clocks: &[Clock]) {
     let area = frame.area();
     let snapshot = state.lock().unwrap().clone();
-    let lines = stats_lines(&snapshot, area.width as usize);
+    let lines = stats_lines(&snapshot, clocks, area.width as usize);
     let paragraph = Paragraph::new(Text::from(lines));
     frame.render_widget(paragraph, area);
 }
 
-fn stats_lines(state: &AppState, width: usize) -> Vec<Line<'static>> {
+fn stats_lines(state: &AppState, clocks: &[Clock], width: usize) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    render_clocks(&mut lines, width);
+    render_clocks(&mut lines, clocks, width);
     render_system(&mut lines, &state.system, width);
     render_ai(
         &mut lines,
@@ -120,25 +128,49 @@ fn stats_lines(state: &AppState, width: usize) -> Vec<Line<'static>> {
     lines
 }
 
-fn render_clocks(lines: &mut Vec<Line<'static>>, width: usize) {
+fn configured_clocks() -> Vec<Clock> {
+    std::env::var("STATS_CLOCKS")
+        .ok()
+        .and_then(|value| serde_json::from_str::<Vec<Clock>>(&value).ok())
+        .filter(|clocks| {
+            !clocks.is_empty()
+                && clocks.len() <= 6
+                && clocks.iter().all(|clock| {
+                    !clock.label.trim().is_empty() && clock.timezone.parse::<Tz>().is_ok()
+                })
+        })
+        .unwrap_or_else(default_clocks)
+}
+
+fn default_clocks() -> Vec<Clock> {
+    DEFAULT_CLOCKS
+        .iter()
+        .map(|(label, timezone)| Clock {
+            label: (*label).into(),
+            timezone: (*timezone).into(),
+        })
+        .collect()
+}
+
+fn render_clocks(lines: &mut Vec<Line<'static>>, clocks: &[Clock], width: usize) {
     let gap = if width >= 72 { 4 } else { 2 };
     let card_widths =
-        equal_column_widths(width.saturating_sub(gap * (CLOCKS.len() - 1)), CLOCKS.len());
+        equal_column_widths(width.saturating_sub(gap * (clocks.len() - 1)), clocks.len());
     if card_widths.contains(&0) {
         return;
     }
     let mut city_spans = Vec::new();
     let mut time_spans = Vec::new();
     let now = Local::now();
-    for (index, ((city, zone_name), card_width)) in CLOCKS.iter().zip(card_widths).enumerate() {
-        let zone: Tz = zone_name.parse().unwrap_or(chrono_tz::UTC);
+    for (index, (clock, card_width)) in clocks.iter().zip(card_widths).enumerate() {
+        let zone: Tz = clock.timezone.parse().unwrap_or(chrono_tz::UTC);
         let zoned = now.with_timezone(&zone);
         if index > 0 {
             city_spans.push(Span::raw(" ".repeat(gap)));
             time_spans.push(Span::raw(" ".repeat(gap)));
         }
         city_spans.push(span(
-            fixed(&city.to_uppercase(), card_width),
+            fixed(&clock.label.to_uppercase(), card_width),
             Color::Cyan,
             true,
         ));
@@ -686,8 +718,9 @@ mod tests {
     #[test]
     fn renders_clocks_as_equal_high_contrast_columns() {
         let mut lines = Vec::new();
+        let clocks = default_clocks();
 
-        render_clocks(&mut lines, 58);
+        render_clocks(&mut lines, &clocks, 58);
 
         assert_eq!(lines.len(), 3);
         assert_eq!(line_text(&lines[0]).chars().count(), 58);
@@ -709,6 +742,34 @@ mod tests {
                 .filter(|span| span.style.add_modifier.contains(Modifier::BOLD))
                 .count()
                 == 4
+        );
+    }
+
+    #[test]
+    fn renders_a_custom_clock_selection() {
+        let mut lines = Vec::new();
+        let clocks = vec![
+            Clock {
+                label: "London".into(),
+                timezone: "Europe/London".into(),
+            },
+            Clock {
+                label: "Tokyo".into(),
+                timezone: "Asia/Tokyo".into(),
+            },
+        ];
+
+        render_clocks(&mut lines, &clocks, 40);
+
+        assert!(line_text(&lines[0]).contains("LONDON"));
+        assert!(line_text(&lines[0]).contains("TOKYO"));
+        assert_eq!(
+            lines[0]
+                .spans
+                .iter()
+                .filter(|span| span.style.fg == Some(Color::Cyan))
+                .count(),
+            2
         );
     }
 

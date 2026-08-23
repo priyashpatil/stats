@@ -14,6 +14,10 @@ let package = Package(
     .executableTarget(
       name: "Stats",
       dependencies: ["SwiftTerm"]
+    ),
+    .testTarget(
+      name: "StatsTests",
+      dependencies: ["Stats"]
     )
   ]
 )

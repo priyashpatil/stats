@@ -15,6 +15,20 @@ for command in cargo swift codesign iconutil launchctl plutil sips; do
     fi
 done
 
+system_app="/Applications/Stats.app"
+system_bundle_id=""
+if [ -f "$system_app/Contents/Info.plist" ]; then
+    system_bundle_id="$(
+        plutil -extract CFBundleIdentifier raw "$system_app/Contents/Info.plist" 2>/dev/null || true
+    )"
+fi
+if [ "$system_bundle_id" = "com.priyashpatil.stats" ]; then
+    echo "A release copy of Stats is installed at $system_app" >&2
+    echo "Source development uses ~/Applications/Stats.app; keeping both would run duplicate menu bar apps." >&2
+    echo "Remove the release copy before installing from source." >&2
+    exit 1
+fi
+
 root="$(cd "$(dirname "$0")" && pwd)"
 macos="$root/macos"
 app="$HOME/Applications/Stats.app"
