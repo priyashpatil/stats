@@ -346,8 +346,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   NSMenuDelegate, @preconcurrency LocalProcessTerminalViewDelegate
 {
   private let clocksDefaultsKey = "selectedClockTimezones"
-  private let frameAutosaveName = "StatsWindow"
   private let launchAgentLabel = "com.priyashpatil.stats"
+  private let windowPlacementDefaultsKey = "mainWindowPlacement"
   private var executable: String?
   private var home: String?
   private var isRestartingTerminal = false
@@ -394,16 +394,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     window.standardWindowButton(.miniaturizeButton)?.isHidden = true
     window.standardWindowButton(.zoomButton)?.isHidden = true
     window.delegate = self
+    window.collectionBehavior = [.managed, .fullScreenNone]
     window.contentMinSize = NSSize(width: defaultWidth, height: 420)
-    if !window.setFrameUsingName(frameAutosaveName) {
-      window.center()
-    }
+    restoreWindowPlacement(window)
     if window.frame.width < defaultWidth {
       var frame = window.frame
       frame.size.width = defaultWidth
       window.setFrame(frame, display: false)
     }
-    window.setFrameAutosaveName(frameAutosaveName)
 
     let background = NSColor(
       srgbRed: 0.0807,
@@ -443,8 +441,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     self.executable = executable
     self.home = home
 
-    window.makeKeyAndOrderFront(nil)
-    NSApp.activate(ignoringOtherApps: true)
+    showMainWindow(window)
     terminal.startProcess(
       executable: executable,
       environment: processEnvironment(home: home)
@@ -452,6 +449,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   func applicationWillTerminate(_ notification: Notification) {
+    saveWindowPlacement()
     terminal?.terminate()
   }
 
@@ -462,6 +460,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   func windowShouldClose(_ sender: NSWindow) -> Bool {
     sender.orderOut(nil)
     return false
+  }
+
+  func windowDidMove(_ notification: Notification) {
+    saveWindowPlacement()
+  }
+
+  func windowDidResize(_ notification: Notification) {
+    saveWindowPlacement()
+  }
+
+  func windowDidChangeScreen(_ notification: Notification) {
+    saveWindowPlacement()
   }
 
   func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
@@ -485,8 +495,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     if window.isVisible {
       window.orderOut(nil)
     } else {
-      window.makeKeyAndOrderFront(nil)
-      NSApp.activate(ignoringOtherApps: true)
+      showMainWindow(window)
     }
   }
 
@@ -620,6 +629,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     )
     DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
       self?.isRestartingTerminal = false
+    }
+  }
+
+  private func restoreWindowPlacement(_ window: NSWindow) {
+    guard let screen = NSScreen.screens.first else { return }
+    let visibleFrame = screen.visibleFrame
+    let placement = UserDefaults.standard.dictionary(forKey: windowPlacementDefaultsKey)
+    let width = placement?["width"] as? Double ?? window.frame.width
+    let height = placement?["height"] as? Double ?? window.frame.height
+    let x = placement?["x"] as? Double ?? (visibleFrame.width - width) / 2
+    let top = placement?["top"] as? Double ?? (visibleFrame.height - height) / 2
+    let frame = NSRect(
+      x: visibleFrame.minX + x,
+      y: visibleFrame.maxY - top - height,
+      width: width,
+      height: height
+    )
+    window.setFrame(window.constrainFrameRect(frame, to: screen), display: false)
+  }
+
+  private func saveWindowPlacement() {
+    guard
+      let window,
+      let screen = window.screen,
+      let primaryScreen = NSScreen.screens.first,
+      screen == primaryScreen
+    else {
+      return
+    }
+    let frame = window.frame
+    let visibleFrame = screen.visibleFrame
+    UserDefaults.standard.set(
+      [
+        "x": frame.minX - visibleFrame.minX,
+        "top": visibleFrame.maxY - frame.maxY,
+        "width": frame.width,
+        "height": frame.height,
+      ],
+      forKey: windowPlacementDefaultsKey
+    )
+  }
+
+  private func showMainWindow(_ window: NSWindow) {
+    restoreWindowPlacement(window)
+    window.makeKeyAndOrderFront(nil)
+    NSApp.activate(ignoringOtherApps: true)
+    DispatchQueue.main.async { [weak self, weak window] in
+      guard let self, let window else { return }
+      self.restoreWindowPlacement(window)
+      window.makeKeyAndOrderFront(nil)
+      self.saveWindowPlacement()
     }
   }
 
