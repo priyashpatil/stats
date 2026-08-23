@@ -107,7 +107,7 @@ To report a security issue, see [SECURITY.md](SECURITY.md).
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test --locked
-swift build --package-path macos
+swift test --package-path macos
 ```
 
 ## License

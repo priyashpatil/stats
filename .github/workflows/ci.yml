@@ -24,4 +24,4 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
-      - run: swift build --package-path macos
+      - run: swift test --package-path macos
