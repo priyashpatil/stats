@@ -17,21 +17,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::Paragraph;
 use ratatui::{Frame, Terminal};
-use serde::Deserialize;
 use serde_json::Value;
-
-const DEFAULT_CLOCKS: &[(&str, &str)] = &[
-    ("Mumbai", "Asia/Kolkata"),
-    ("Paris", "Europe/Paris"),
-    ("Sydney", "Australia/Sydney"),
-    ("Seattle", "America/Los_Angeles"),
-];
-
-#[derive(Debug, Clone, Deserialize)]
-struct Clock {
-    label: String,
-    timezone: String,
-}
 
 const BAR_FILLED: &str = "━";
 const BAR_EMPTY: &str = "·";
@@ -54,14 +40,17 @@ fn equal_column_widths(width: usize, count: usize) -> Vec<usize> {
         .collect()
 }
 
-use crate::model::{AmpUsage, AppState, CodexActivityUsage, ProviderState, SystemMetrics};
+use crate::model::{AmpUsage, AppState, Clock, CodexActivityUsage, ProviderState, SystemMetrics};
 use crate::providers::codex::{codex_weekly_window, left_percent, ordered_buckets};
 
 mod activity;
 use activity::render_codex_activity;
 
-pub(crate) fn run_tui(state: &Arc<Mutex<AppState>>, stop: &Arc<AtomicBool>) -> Result<(), String> {
-    let clocks = configured_clocks();
+pub(crate) fn run_tui(
+    state: &Arc<Mutex<AppState>>,
+    stop: &Arc<AtomicBool>,
+    clocks: &[Clock],
+) -> Result<(), String> {
     enable_raw_mode().map_err(|err| err.to_string())?;
     let mut stdout = io::stdout();
     execute!(
@@ -78,7 +67,7 @@ pub(crate) fn run_tui(state: &Arc<Mutex<AppState>>, stop: &Arc<AtomicBool>) -> R
     let mut terminal = Terminal::new(backend).map_err(|err| err.to_string())?;
     let result = loop {
         terminal
-            .draw(|frame| draw(frame, state, &clocks))
+            .draw(|frame| draw(frame, state, clocks))
             .map_err(|err| err.to_string())?;
         if event::poll(Duration::from_millis(200)).map_err(|err| err.to_string())?
             && let Event::Key(key) = event::read().map_err(|err| err.to_string())?
@@ -126,30 +115,6 @@ fn stats_lines(state: &AppState, clocks: &[Clock], width: usize) -> Vec<Line<'st
         width,
     );
     lines
-}
-
-fn configured_clocks() -> Vec<Clock> {
-    std::env::var("STATS_CLOCKS")
-        .ok()
-        .and_then(|value| serde_json::from_str::<Vec<Clock>>(&value).ok())
-        .filter(|clocks| {
-            !clocks.is_empty()
-                && clocks.len() <= 6
-                && clocks.iter().all(|clock| {
-                    !clock.label.trim().is_empty() && clock.timezone.parse::<Tz>().is_ok()
-                })
-        })
-        .unwrap_or_else(default_clocks)
-}
-
-fn default_clocks() -> Vec<Clock> {
-    DEFAULT_CLOCKS
-        .iter()
-        .map(|(label, timezone)| Clock {
-            label: (*label).into(),
-            timezone: (*timezone).into(),
-        })
-        .collect()
 }
 
 fn render_clocks(lines: &mut Vec<Line<'static>>, clocks: &[Clock], width: usize) {
@@ -718,7 +683,7 @@ mod tests {
     #[test]
     fn renders_clocks_as_equal_high_contrast_columns() {
         let mut lines = Vec::new();
-        let clocks = default_clocks();
+        let clocks = crate::config::Config::default().clocks;
 
         render_clocks(&mut lines, &clocks, 58);
 

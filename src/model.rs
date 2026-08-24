@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::time::Instant;
 
 use chrono::{DateTime, Local, NaiveDate};
@@ -5,11 +6,26 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub(crate) struct Args {
+    pub(crate) action: Action,
     pub(crate) mode: Mode,
     pub(crate) interval: u64,
     pub(crate) once: bool,
     pub(crate) amp_interval: u64,
     pub(crate) storage_interval: u64,
+    pub(crate) clocks: Vec<Clock>,
+    pub(crate) config_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum Action {
+    Run,
+    ConfigPath,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct Clock {
+    pub(crate) label: String,
+    pub(crate) timezone: String,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

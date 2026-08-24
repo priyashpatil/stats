@@ -16,17 +16,25 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
   private var clockPickerPanel: ClockPickerPanel?
   private var selectedClockChoices: [ClockChoice]
   private let onLaunchAtLoginChange: (Bool) -> Bool
+  private let onFontSizeChange: (Int) -> Void
   private let onClockChoicesChange: ([ClockChoice]) -> Void
+  private let onOpenConfig: () -> Void
 
   init(
     selectedClockChoices: [ClockChoice],
     launchesAtLogin: Bool,
+    fontSize: Int,
+    configPath: String,
     onLaunchAtLoginChange: @escaping (Bool) -> Bool,
-    onClockChoicesChange: @escaping ([ClockChoice]) -> Void
+    onFontSizeChange: @escaping (Int) -> Void,
+    onClockChoicesChange: @escaping ([ClockChoice]) -> Void,
+    onOpenConfig: @escaping () -> Void
   ) {
     self.selectedClockChoices = selectedClockChoices
     self.onLaunchAtLoginChange = onLaunchAtLoginChange
+    self.onFontSizeChange = onFontSizeChange
     self.onClockChoicesChange = onClockChoicesChange
+    self.onOpenConfig = onOpenConfig
     let window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 720, height: 440),
       styleMask: [.titled, .closable, .resizable],
@@ -37,16 +45,30 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     window.title = "Stats Settings"
     window.isReleasedWhenClosed = false
     window.center()
-    configureContent(selectedClockChoices: selectedClockChoices, launchesAtLogin: launchesAtLogin)
+    configureContent(
+      selectedClockChoices: selectedClockChoices,
+      launchesAtLogin: launchesAtLogin,
+      fontSize: fontSize,
+      configPath: configPath
+    )
   }
 
   required init?(coder: NSCoder) {
     fatalError("init(coder:) has not been implemented")
   }
 
-  private func configureContent(selectedClockChoices: [ClockChoice], launchesAtLogin: Bool) {
+  private func configureContent(
+    selectedClockChoices: [ClockChoice],
+    launchesAtLogin: Bool,
+    fontSize: Int,
+    configPath: String
+  ) {
     panes = [
-      generalViewController(launchesAtLogin: launchesAtLogin),
+      generalViewController(
+        launchesAtLogin: launchesAtLogin,
+        fontSize: fontSize,
+        configPath: configPath
+      ),
       clocksViewController(selectedClockChoices: selectedClockChoices),
       AboutViewController(),
     ]
@@ -73,11 +95,11 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     appIcon.image = NSApp.applicationIconImage
     appIcon.imageScaling = .scaleProportionallyUpOrDown
     let appName = NSTextField(labelWithString: "Stats")
-    appName.font = .systemFont(ofSize: 15, weight: .semibold)
+    appName.font = .systemFont(ofSize: 17, weight: .semibold)
     let appHeader = NSStackView(views: [appIcon, appName])
     appHeader.orientation = .horizontal
     appHeader.alignment = .centerY
-    appHeader.spacing = 8
+    appHeader.spacing = 10
     appHeader.translatesAutoresizingMaskIntoConstraints = false
     sidebar.addSubview(appHeader)
 
@@ -88,42 +110,107 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
     let scrollView = NSScrollView()
     scrollView.drawsBackground = false
+    scrollView.hasVerticalScroller = true
+    scrollView.autohidesScrollers = true
     scrollView.documentView = sidebarTable
     scrollView.translatesAutoresizingMaskIntoConstraints = false
     sidebar.addSubview(scrollView)
     NSLayoutConstraint.activate([
-      appHeader.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 12),
+      appHeader.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 16),
       appHeader.topAnchor.constraint(equalTo: sidebar.topAnchor, constant: 16),
-      appIcon.widthAnchor.constraint(equalToConstant: 28),
-      appIcon.heightAnchor.constraint(equalToConstant: 28),
+      appIcon.widthAnchor.constraint(equalToConstant: 44),
+      appIcon.heightAnchor.constraint(equalToConstant: 44),
       separator.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 12),
       separator.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -12),
       separator.topAnchor.constraint(equalTo: appHeader.bottomAnchor, constant: 12),
       scrollView.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor),
       scrollView.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor),
       scrollView.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 8),
-      scrollView.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor, constant: -12),
+      scrollView.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor),
     ])
 
     detailController.view = NSView()
-    let splitController = NSSplitViewController()
+
+    let splitViewController = NSSplitViewController()
+    splitViewController.preferredContentSize = NSSize(width: 720, height: 440)
+    splitViewController.splitView.isVertical = true
+    splitViewController.splitView.dividerStyle = .thin
+
     let sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebarController)
-    sidebarItem.canCollapse = false
     sidebarItem.minimumThickness = 180
-    sidebarItem.maximumThickness = 220
-    splitController.addSplitViewItem(sidebarItem)
-    splitController.addSplitViewItem(NSSplitViewItem(viewController: detailController))
-    window?.contentViewController = splitController
-    window?.contentMinSize = NSSize(width: 620, height: 360)
+    sidebarItem.maximumThickness = 240
+    sidebarItem.canCollapse = false
+    splitViewController.addSplitViewItem(sidebarItem)
+
+    let detailItem = NSSplitViewItem(viewController: detailController)
+    detailItem.minimumThickness = 440
+    splitViewController.addSplitViewItem(detailItem)
+
+    window?.contentViewController = splitViewController
+    window?.contentMinSize = NSSize(width: 660, height: 360)
+    window?.setContentSize(splitViewController.preferredContentSize)
 
     sidebarTable.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
     showPane(at: 0)
   }
 
-  private func generalViewController(launchesAtLogin: Bool) -> NSViewController {
+  private func generalViewController(
+    launchesAtLogin: Bool,
+    fontSize: Int,
+    configPath: String
+  ) -> NSViewController {
     let controller = settingsPane()
     let title = NSTextField(labelWithString: "General")
     title.font = .systemFont(ofSize: 22, weight: .semibold)
+    let subtitle = NSTextField(
+      wrappingLabelWithString: "Customize the terminal and choose how Stats starts on your Mac."
+    )
+    subtitle.textColor = .secondaryLabelColor
+
+    let terminalHeading = NSTextField(labelWithString: "Terminal")
+    terminalHeading.font = .systemFont(ofSize: 13, weight: .semibold)
+    let fontSizeLabel = NSTextField(labelWithString: "Font size:")
+    let fontSizePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    for size in StatsConfigStore.availableFontSizes {
+      fontSizePopup.addItem(withTitle: "\(size) pt")
+      fontSizePopup.lastItem?.tag = size
+    }
+    fontSizePopup.selectItem(withTag: fontSize)
+    fontSizePopup.target = self
+    fontSizePopup.action = #selector(fontSizeChanged(_:))
+    let fontSizeRow = NSStackView(views: [fontSizeLabel, fontSizePopup])
+    fontSizeRow.orientation = .horizontal
+    fontSizeRow.alignment = .centerY
+    fontSizeRow.spacing = 12
+    let fontSizeHelp = NSTextField(
+      wrappingLabelWithString: "Adjust the text size used in the Stats terminal."
+    )
+    fontSizeHelp.textColor = .secondaryLabelColor
+    let terminalSection = NSStackView(views: [terminalHeading, fontSizeRow, fontSizeHelp])
+    terminalSection.orientation = .vertical
+    terminalSection.alignment = .leading
+    terminalSection.spacing = 8
+
+    let configHeading = NSTextField(labelWithString: "Configuration")
+    configHeading.font = .systemFont(ofSize: 13, weight: .semibold)
+    let configPathLabel = NSTextField(wrappingLabelWithString: configPath)
+    configPathLabel.textColor = .secondaryLabelColor
+    configPathLabel.lineBreakMode = .byTruncatingMiddle
+    let openConfigButton = NSButton(
+      title: "Open Configuration File…",
+      target: self,
+      action: #selector(openConfig(_:))
+    )
+    let configSection = NSStackView(views: [configHeading, configPathLabel, openConfigButton])
+    configSection.orientation = .vertical
+    configSection.alignment = .leading
+    configSection.spacing = 8
+
+    let separator = NSBox()
+    separator.boxType = .separator
+
+    let startupHeading = NSTextField(labelWithString: "Startup")
+    startupHeading.font = .systemFont(ofSize: 13, weight: .semibold)
     let checkbox = NSButton(
       checkboxWithTitle: "Launch Stats at login",
       target: self,
@@ -134,12 +221,23 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
       wrappingLabelWithString: "Automatically open Stats when you sign in to your Mac."
     )
     help.textColor = .secondaryLabelColor
+    let startupSection = NSStackView(views: [startupHeading, checkbox, help])
+    startupSection.orientation = .vertical
+    startupSection.alignment = .leading
+    startupSection.spacing = 8
 
-    let stack = NSStackView(views: [title, checkbox, help])
+    let stack = NSStackView(
+      views: [title, subtitle, terminalSection, configSection, separator, startupSection]
+    )
     stack.orientation = .vertical
     stack.alignment = .leading
-    stack.spacing = 6
-    stack.setCustomSpacing(24, after: title)
+    stack.spacing = 8
+    stack.setCustomSpacing(6, after: title)
+    stack.setCustomSpacing(24, after: subtitle)
+    stack.setCustomSpacing(20, after: terminalSection)
+    stack.setCustomSpacing(20, after: configSection)
+    stack.setCustomSpacing(20, after: separator)
+    separator.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
     install(stack, in: controller.view)
     return controller
   }
@@ -200,7 +298,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     NSLayoutConstraint.activate([
       stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 28),
       stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -28),
-      stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 28),
+      stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 52),
+      stack.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -28),
     ])
   }
 
@@ -217,8 +316,9 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     let cell = NSTableCellView()
     let image = NSImageView()
     image.image = NSImage(systemSymbolName: item.symbol, accessibilityDescription: item.title)
-    image.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
+    image.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 16, weight: .regular)
     let label = NSTextField(labelWithString: item.title)
+    label.font = .systemFont(ofSize: 14, weight: .medium)
     let stack = NSStackView(views: [image, label])
     stack.orientation = .horizontal
     stack.alignment = .centerY
@@ -229,7 +329,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
       stack.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
       stack.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -6),
       stack.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-      image.widthAnchor.constraint(equalToConstant: 18),
+      image.widthAnchor.constraint(equalToConstant: 20),
     ])
     return cell
   }
@@ -246,21 +346,49 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
       child.view.removeFromSuperview()
       child.removeFromParent()
     }
+    detailController.view.subviews.forEach { $0.removeFromSuperview() }
+
     let pane = panes[index]
     detailController.addChild(pane)
-    pane.view.translatesAutoresizingMaskIntoConstraints = false
-    detailController.view.addSubview(pane.view)
+
+    let scrollView = NSScrollView()
+    scrollView.drawsBackground = false
+    scrollView.hasVerticalScroller = true
+    scrollView.autohidesScrollers = true
+    scrollView.translatesAutoresizingMaskIntoConstraints = false
+    detailController.view.addSubview(scrollView)
     NSLayoutConstraint.activate([
-      pane.view.leadingAnchor.constraint(equalTo: detailController.view.leadingAnchor),
-      pane.view.trailingAnchor.constraint(equalTo: detailController.view.trailingAnchor),
-      pane.view.topAnchor.constraint(equalTo: detailController.view.topAnchor),
-      pane.view.bottomAnchor.constraint(equalTo: detailController.view.bottomAnchor),
+      scrollView.leadingAnchor.constraint(equalTo: detailController.view.leadingAnchor),
+      scrollView.trailingAnchor.constraint(equalTo: detailController.view.trailingAnchor),
+      scrollView.topAnchor.constraint(equalTo: detailController.view.topAnchor),
+      scrollView.bottomAnchor.constraint(equalTo: detailController.view.bottomAnchor),
     ])
+    detailController.view.layoutSubtreeIfNeeded()
+
+    let documentSize = NSSize(
+      width: scrollView.contentSize.width,
+      height: max(scrollView.contentSize.height, pane.preferredContentSize.height)
+    )
+    let documentView = FlippedView(frame: NSRect(origin: .zero, size: documentSize))
+    documentView.autoresizingMask = [.width]
+    pane.view.translatesAutoresizingMaskIntoConstraints = true
+    pane.view.frame = documentView.bounds
+    pane.view.autoresizingMask = [.width, .height]
+    documentView.addSubview(pane.view)
+    scrollView.documentView = documentView
   }
 
   @objc private func launchAtLoginChanged(_ sender: NSButton) {
     let requested = sender.state == .on
     sender.state = onLaunchAtLoginChange(requested) ? .on : .off
+  }
+
+  @objc private func fontSizeChanged(_ sender: NSPopUpButton) {
+    onFontSizeChange(sender.selectedTag())
+  }
+
+  @objc private func openConfig(_ sender: Any?) {
+    onOpenConfig()
   }
 
   private func showClockPicker(for popup: ClockPickerButton, slot: Int) {
@@ -295,4 +423,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     clockPickerPanel = panel
     panel.makeKeyAndOrderFront(nil)
   }
+}
+
+private final class FlippedView: NSView {
+  override var isFlipped: Bool { true }
 }

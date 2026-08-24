@@ -5,8 +5,9 @@ Thanks for helping improve Stats. This guide covers the technical setup; the [RE
 ## Project structure
 
 - `src/` contains the Rust terminal dashboard and usage providers.
-- `macos/` contains the native Swift wrapper, settings, and app tests.
-- `install.sh` builds and installs the complete development app.
+- `macos/` contains the native Swift wrapper, shared-config editor, and app tests.
+- `develop.sh` builds, reinstalls, and verifies the complete development app.
+- `install.sh` is the lower-level installer used by `develop.sh`.
 - `.github/workflows/` contains CI and release automation.
 
 ## Prerequisites
@@ -35,17 +36,19 @@ Use `cargo run --locked -- --once` when you only need one rendered snapshot.
 
 ## Build and install the macOS app
 
-Use the repository's installer rather than launching the Swift build output directly:
+Use the repository's canonical development workflow rather than running separate builds or launching the Swift build output directly:
 
 ```sh
-./install.sh
+./develop.sh
 ```
 
 This command:
 
+- builds the Rust and Swift release targets
 - installs `stats`, `codex-usage`, and `codex-usage-status` in `~/.cargo/bin`
 - builds and ad-hoc signs `~/Applications/Stats.app`
 - installs its user LaunchAgent and starts the app
+- verifies the app signature, service state, and running executable
 
 The development app at `~/Applications/Stats.app` and the Homebrew release at `/Applications/Stats.app` cannot be installed together because they share a bundle identifier. If the release is installed, remove it first with:
 
@@ -70,7 +73,7 @@ cargo test --locked
 swift test --package-path macos
 ```
 
-When native app behavior changes, also reinstall it with `./install.sh` and verify the change in the installed app.
+After changing Rust or Swift code, run `./develop.sh` to build both components, reinstall the app, and verify the installed copy.
 
 ## Pull requests
 

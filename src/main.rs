@@ -2,6 +2,7 @@ mod app;
 mod cache;
 mod cli;
 mod command;
+mod config;
 mod model;
 mod providers;
 mod system;

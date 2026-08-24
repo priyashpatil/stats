@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::cache::prime_usage_caches;
 use crate::cli::{command_exists, parse_args};
-use crate::model::{AppState, Args, Mode};
+use crate::model::{Action, AppState, Args, Mode};
 use crate::providers::amp::spawn_refresh_amp;
 use crate::providers::codex::{
     pick_port, run_codex_usage_status, shutdown_server, spawn_codex_client, start_codex_server,
@@ -21,6 +21,10 @@ pub(crate) fn main() {
 
 fn run() -> Result<(), String> {
     let args = parse_args()?;
+    if args.action == Action::ConfigPath {
+        println!("{}", args.config_path.display());
+        return Ok(());
+    }
     match args.mode {
         Mode::Stats => {
             for command in ["amp", "codex"] {
@@ -58,7 +62,7 @@ fn run_stats(args: Args) -> Result<(), String> {
             print_once(&state);
             Ok(())
         } else {
-            run_tui(&state, &stop)
+            run_tui(&state, &stop, &args.clocks)
         }
     })();
 
