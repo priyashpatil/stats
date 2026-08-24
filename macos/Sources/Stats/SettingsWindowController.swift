@@ -18,37 +18,38 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
   private let onLaunchAtLoginChange: (Bool) -> Bool
   private let onFontSizeChange: (Int) -> Void
   private let onClockChoicesChange: ([ClockChoice]) -> Void
+  private let onOpenConfig: () -> Void
 
   init(
     selectedClockChoices: [ClockChoice],
     launchesAtLogin: Bool,
     fontSize: Int,
+    configPath: String,
     onLaunchAtLoginChange: @escaping (Bool) -> Bool,
     onFontSizeChange: @escaping (Int) -> Void,
-    onClockChoicesChange: @escaping ([ClockChoice]) -> Void
+    onClockChoicesChange: @escaping ([ClockChoice]) -> Void,
+    onOpenConfig: @escaping () -> Void
   ) {
     self.selectedClockChoices = selectedClockChoices
     self.onLaunchAtLoginChange = onLaunchAtLoginChange
     self.onFontSizeChange = onFontSizeChange
     self.onClockChoicesChange = onClockChoicesChange
+    self.onOpenConfig = onOpenConfig
     let window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 720, height: 440),
-      styleMask: [.titled, .closable, .resizable, .fullSizeContentView],
+      styleMask: [.titled, .closable, .resizable],
       backing: .buffered,
       defer: false
     )
     super.init(window: window)
     window.title = "Stats Settings"
-    window.titleVisibility = .hidden
-    window.titlebarAppearsTransparent = true
-    window.titlebarSeparatorStyle = .none
-    window.isMovableByWindowBackground = true
     window.isReleasedWhenClosed = false
     window.center()
     configureContent(
       selectedClockChoices: selectedClockChoices,
       launchesAtLogin: launchesAtLogin,
-      fontSize: fontSize
+      fontSize: fontSize,
+      configPath: configPath
     )
   }
 
@@ -56,74 +57,27 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     fatalError("init(coder:) has not been implemented")
   }
 
-  override func showWindow(_ sender: Any?) {
-    super.showWindow(sender)
-    alignTrafficLights()
-  }
-
-  private func alignTrafficLights() {
-    guard
-      let window,
-      let closeButton = window.standardWindowButton(.closeButton),
-      let buttonContainer = closeButton.superview
-    else { return }
-
-    let leftInset: CGFloat = 19
-    let topInset = min(CGFloat(19), buttonContainer.bounds.height - closeButton.frame.height)
-    let horizontalOffset = leftInset - closeButton.frame.minX
-    for type in [
-      NSWindow.ButtonType.closeButton,
-      .miniaturizeButton,
-      .zoomButton,
-    ] {
-      guard let button = window.standardWindowButton(type) else { continue }
-      button.setFrameOrigin(
-        NSPoint(
-          x: button.frame.minX + horizontalOffset,
-          y: buttonContainer.bounds.height - topInset - button.frame.height
-        )
-      )
-    }
-  }
-
   private func configureContent(
     selectedClockChoices: [ClockChoice],
     launchesAtLogin: Bool,
-    fontSize: Int
+    fontSize: Int,
+    configPath: String
   ) {
     panes = [
-      generalViewController(launchesAtLogin: launchesAtLogin, fontSize: fontSize),
+      generalViewController(
+        launchesAtLogin: launchesAtLogin,
+        fontSize: fontSize,
+        configPath: configPath
+      ),
       clocksViewController(selectedClockChoices: selectedClockChoices),
       AboutViewController(),
     ]
 
     let sidebarController = NSViewController()
-    let sidebarContent = NSView()
-    let sidebar: NSView
-    if #available(macOS 26.0, *) {
-      let glass = NSGlassEffectView()
-      glass.cornerRadius = 18
-      glass.style = .regular
-      glass.contentView = sidebarContent
-      sidebar = glass
-    } else {
-      let material = NSVisualEffectView()
-      material.material = .sidebar
-      material.blendingMode = .behindWindow
-      material.state = .active
-      material.wantsLayer = true
-      material.layer?.cornerRadius = 18
-      material.layer?.masksToBounds = true
-      sidebarContent.translatesAutoresizingMaskIntoConstraints = false
-      material.addSubview(sidebarContent)
-      NSLayoutConstraint.activate([
-        sidebarContent.leadingAnchor.constraint(equalTo: material.leadingAnchor),
-        sidebarContent.trailingAnchor.constraint(equalTo: material.trailingAnchor),
-        sidebarContent.topAnchor.constraint(equalTo: material.topAnchor),
-        sidebarContent.bottomAnchor.constraint(equalTo: material.bottomAnchor),
-      ])
-      sidebar = material
-    }
+    let sidebar = NSVisualEffectView()
+    sidebar.material = .sidebar
+    sidebar.blendingMode = .behindWindow
+    sidebar.state = .active
     sidebarController.view = sidebar
 
     let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("SettingsSidebar"))
@@ -147,59 +101,64 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     appHeader.alignment = .centerY
     appHeader.spacing = 10
     appHeader.translatesAutoresizingMaskIntoConstraints = false
-    sidebarContent.addSubview(appHeader)
+    sidebar.addSubview(appHeader)
 
     let separator = NSBox()
     separator.boxType = .separator
     separator.translatesAutoresizingMaskIntoConstraints = false
-    sidebarContent.addSubview(separator)
+    sidebar.addSubview(separator)
 
     let scrollView = NSScrollView()
     scrollView.drawsBackground = false
+    scrollView.hasVerticalScroller = true
+    scrollView.autohidesScrollers = true
     scrollView.documentView = sidebarTable
     scrollView.translatesAutoresizingMaskIntoConstraints = false
-    sidebarContent.addSubview(scrollView)
+    sidebar.addSubview(scrollView)
     NSLayoutConstraint.activate([
-      appHeader.leadingAnchor.constraint(equalTo: sidebarContent.leadingAnchor, constant: 16),
-      appHeader.topAnchor.constraint(equalTo: sidebarContent.topAnchor, constant: 44),
+      appHeader.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 16),
+      appHeader.topAnchor.constraint(equalTo: sidebar.topAnchor, constant: 16),
       appIcon.widthAnchor.constraint(equalToConstant: 44),
       appIcon.heightAnchor.constraint(equalToConstant: 44),
-      separator.leadingAnchor.constraint(equalTo: sidebarContent.leadingAnchor, constant: 12),
-      separator.trailingAnchor.constraint(equalTo: sidebarContent.trailingAnchor, constant: -12),
+      separator.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor, constant: 12),
+      separator.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: -12),
       separator.topAnchor.constraint(equalTo: appHeader.bottomAnchor, constant: 12),
-      scrollView.leadingAnchor.constraint(equalTo: sidebarContent.leadingAnchor),
-      scrollView.trailingAnchor.constraint(equalTo: sidebarContent.trailingAnchor),
+      scrollView.leadingAnchor.constraint(equalTo: sidebar.leadingAnchor),
+      scrollView.trailingAnchor.constraint(equalTo: sidebar.trailingAnchor),
       scrollView.topAnchor.constraint(equalTo: separator.bottomAnchor, constant: 8),
-      scrollView.bottomAnchor.constraint(equalTo: sidebarContent.bottomAnchor, constant: -12),
+      scrollView.bottomAnchor.constraint(equalTo: sidebar.bottomAnchor),
     ])
 
     detailController.view = NSView()
-    let contentController = NSViewController()
-    contentController.view = NSView()
-    contentController.addChild(sidebarController)
-    contentController.addChild(detailController)
-    sidebar.translatesAutoresizingMaskIntoConstraints = false
-    detailController.view.translatesAutoresizingMaskIntoConstraints = false
-    contentController.view.addSubview(sidebar)
-    contentController.view.addSubview(detailController.view)
-    NSLayoutConstraint.activate([
-      sidebar.leadingAnchor.constraint(equalTo: contentController.view.leadingAnchor, constant: 8),
-      sidebar.topAnchor.constraint(equalTo: contentController.view.topAnchor, constant: 8),
-      sidebar.bottomAnchor.constraint(equalTo: contentController.view.bottomAnchor, constant: -8),
-      sidebar.widthAnchor.constraint(equalToConstant: 212),
-      detailController.view.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: 8),
-      detailController.view.trailingAnchor.constraint(equalTo: contentController.view.trailingAnchor),
-      detailController.view.topAnchor.constraint(equalTo: contentController.view.topAnchor),
-      detailController.view.bottomAnchor.constraint(equalTo: contentController.view.bottomAnchor),
-    ])
-    window?.contentViewController = contentController
+
+    let splitViewController = NSSplitViewController()
+    splitViewController.preferredContentSize = NSSize(width: 720, height: 440)
+    splitViewController.splitView.isVertical = true
+    splitViewController.splitView.dividerStyle = .thin
+
+    let sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebarController)
+    sidebarItem.minimumThickness = 180
+    sidebarItem.maximumThickness = 240
+    sidebarItem.canCollapse = false
+    splitViewController.addSplitViewItem(sidebarItem)
+
+    let detailItem = NSSplitViewItem(viewController: detailController)
+    detailItem.minimumThickness = 440
+    splitViewController.addSplitViewItem(detailItem)
+
+    window?.contentViewController = splitViewController
     window?.contentMinSize = NSSize(width: 660, height: 360)
+    window?.setContentSize(splitViewController.preferredContentSize)
 
     sidebarTable.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
     showPane(at: 0)
   }
 
-  private func generalViewController(launchesAtLogin: Bool, fontSize: Int) -> NSViewController {
+  private func generalViewController(
+    launchesAtLogin: Bool,
+    fontSize: Int,
+    configPath: String
+  ) -> NSViewController {
     let controller = settingsPane()
     let title = NSTextField(labelWithString: "General")
     title.font = .systemFont(ofSize: 22, weight: .semibold)
@@ -212,7 +171,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     terminalHeading.font = .systemFont(ofSize: 13, weight: .semibold)
     let fontSizeLabel = NSTextField(labelWithString: "Font size:")
     let fontSizePopup = NSPopUpButton(frame: .zero, pullsDown: false)
-    for size in TerminalPreferences.availableFontSizes {
+    for size in StatsConfigStore.availableFontSizes {
       fontSizePopup.addItem(withTitle: "\(size) pt")
       fontSizePopup.lastItem?.tag = size
     }
@@ -231,6 +190,21 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     terminalSection.orientation = .vertical
     terminalSection.alignment = .leading
     terminalSection.spacing = 8
+
+    let configHeading = NSTextField(labelWithString: "Configuration")
+    configHeading.font = .systemFont(ofSize: 13, weight: .semibold)
+    let configPathLabel = NSTextField(wrappingLabelWithString: configPath)
+    configPathLabel.textColor = .secondaryLabelColor
+    configPathLabel.lineBreakMode = .byTruncatingMiddle
+    let openConfigButton = NSButton(
+      title: "Open Configuration File…",
+      target: self,
+      action: #selector(openConfig(_:))
+    )
+    let configSection = NSStackView(views: [configHeading, configPathLabel, openConfigButton])
+    configSection.orientation = .vertical
+    configSection.alignment = .leading
+    configSection.spacing = 8
 
     let separator = NSBox()
     separator.boxType = .separator
@@ -253,7 +227,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     startupSection.spacing = 8
 
     let stack = NSStackView(
-      views: [title, subtitle, terminalSection, separator, startupSection]
+      views: [title, subtitle, terminalSection, configSection, separator, startupSection]
     )
     stack.orientation = .vertical
     stack.alignment = .leading
@@ -261,6 +235,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     stack.setCustomSpacing(6, after: title)
     stack.setCustomSpacing(24, after: subtitle)
     stack.setCustomSpacing(20, after: terminalSection)
+    stack.setCustomSpacing(20, after: configSection)
     stack.setCustomSpacing(20, after: separator)
     separator.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
     install(stack, in: controller.view)
@@ -324,6 +299,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
       stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 28),
       stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -28),
       stack.topAnchor.constraint(equalTo: view.topAnchor, constant: 52),
+      stack.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor, constant: -28),
     ])
   }
 
@@ -370,16 +346,36 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
       child.view.removeFromSuperview()
       child.removeFromParent()
     }
+    detailController.view.subviews.forEach { $0.removeFromSuperview() }
+
     let pane = panes[index]
     detailController.addChild(pane)
-    pane.view.translatesAutoresizingMaskIntoConstraints = false
-    detailController.view.addSubview(pane.view)
+
+    let scrollView = NSScrollView()
+    scrollView.drawsBackground = false
+    scrollView.hasVerticalScroller = true
+    scrollView.autohidesScrollers = true
+    scrollView.translatesAutoresizingMaskIntoConstraints = false
+    detailController.view.addSubview(scrollView)
     NSLayoutConstraint.activate([
-      pane.view.leadingAnchor.constraint(equalTo: detailController.view.leadingAnchor),
-      pane.view.trailingAnchor.constraint(equalTo: detailController.view.trailingAnchor),
-      pane.view.topAnchor.constraint(equalTo: detailController.view.topAnchor),
-      pane.view.bottomAnchor.constraint(equalTo: detailController.view.bottomAnchor),
+      scrollView.leadingAnchor.constraint(equalTo: detailController.view.leadingAnchor),
+      scrollView.trailingAnchor.constraint(equalTo: detailController.view.trailingAnchor),
+      scrollView.topAnchor.constraint(equalTo: detailController.view.topAnchor),
+      scrollView.bottomAnchor.constraint(equalTo: detailController.view.bottomAnchor),
     ])
+    detailController.view.layoutSubtreeIfNeeded()
+
+    let documentSize = NSSize(
+      width: scrollView.contentSize.width,
+      height: max(scrollView.contentSize.height, pane.preferredContentSize.height)
+    )
+    let documentView = FlippedView(frame: NSRect(origin: .zero, size: documentSize))
+    documentView.autoresizingMask = [.width]
+    pane.view.translatesAutoresizingMaskIntoConstraints = true
+    pane.view.frame = documentView.bounds
+    pane.view.autoresizingMask = [.width, .height]
+    documentView.addSubview(pane.view)
+    scrollView.documentView = documentView
   }
 
   @objc private func launchAtLoginChanged(_ sender: NSButton) {
@@ -389,6 +385,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
   @objc private func fontSizeChanged(_ sender: NSPopUpButton) {
     onFontSizeChange(sender.selectedTag())
+  }
+
+  @objc private func openConfig(_ sender: Any?) {
+    onOpenConfig()
   }
 
   private func showClockPicker(for popup: ClockPickerButton, slot: Int) {
@@ -423,4 +423,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     clockPickerPanel = panel
     panel.makeKeyAndOrderFront(nil)
   }
+}
+
+private final class FlippedView: NSView {
+  override var isFlipped: Bool { true }
 }

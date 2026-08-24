@@ -5,7 +5,7 @@ Thanks for helping improve Stats. This guide covers the technical setup; the [RE
 ## Project structure
 
 - `src/` contains the Rust terminal dashboard and usage providers.
-- `macos/` contains the native Swift wrapper, settings, and app tests.
+- `macos/` contains the native Swift wrapper, shared-config editor, and app tests.
 - `develop.sh` builds, reinstalls, and verifies the complete development app.
 - `install.sh` is the lower-level installer used by `develop.sh`.
 - `.github/workflows/` contains CI and release automation.

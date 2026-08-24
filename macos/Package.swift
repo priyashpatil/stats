@@ -8,12 +8,16 @@ let package = Package(
     .macOS(.v11)
   ],
   dependencies: [
-    .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", from: "1.20.0")
+    .package(url: "https://github.com/migueldeicaza/SwiftTerm.git", from: "1.20.0"),
+    .package(url: "https://github.com/mattt/swift-toml.git", from: "2.0.0"),
   ],
   targets: [
     .executableTarget(
       name: "Stats",
-      dependencies: ["SwiftTerm"]
+      dependencies: [
+        "SwiftTerm",
+        .product(name: "TOML", package: "swift-toml"),
+      ]
     ),
     .testTarget(
       name: "StatsTests",

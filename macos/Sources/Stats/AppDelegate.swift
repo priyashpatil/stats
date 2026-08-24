@@ -5,10 +5,9 @@ import SwiftTerm
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   NSMenuDelegate, @preconcurrency LocalProcessTerminalViewDelegate
 {
-  private let clockPreferences = ClockPreferences()
   private let launchAtLoginController = LaunchAtLoginController()
-  private let terminalPreferences = TerminalPreferences()
   private let windowPlacementStore = WindowPlacementStore()
+  private var configStore: StatsConfigStore?
   private var executable: String?
   private var home: String?
   private var isRestartingTerminal = false
@@ -35,6 +34,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       })
     else {
       showMissingExecutableAlert(installedExecutable)
+      NSApp.terminate(nil)
+      return
+    }
+
+    let configStore: StatsConfigStore
+    do {
+      configStore = try StatsConfigStore()
+    } catch {
+      showConfigErrorAlert(error)
       NSApp.terminate(nil)
       return
     }
@@ -74,7 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     window.backgroundColor = background
 
     let terminalFrame = (window.contentView?.bounds ?? .zero).insetBy(dx: 16, dy: 16)
-    let font = terminalFont(size: terminalPreferences.fontSize)
+    let font = terminalFont(size: configStore.config.desktop.fontSize)
     let terminal = LocalProcessTerminalView(
       frame: terminalFrame,
       font: font,
@@ -98,12 +106,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
     self.window = window
     self.terminal = terminal
+    self.configStore = configStore
     self.executable = executable
     self.home = home
 
     showMainWindow(window)
     terminal.startProcess(
       executable: executable,
+      args: ["--config", configStore.url.path],
       environment: processEnvironment(home: home)
     )
   }
@@ -179,6 +189,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   @objc private func showSettings(_ sender: Any?) {
+    guard let configStore else { return }
     if let settingsWindowController {
       settingsWindowController.showWindow(nil)
       settingsWindowController.window?.makeKeyAndOrderFront(nil)
@@ -186,21 +197,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       return
     }
     let controller = SettingsWindowController(
-      selectedClockChoices: clockPreferences.selectedChoices,
+      selectedClockChoices: configStore.config.clocks,
       launchesAtLogin: launchAtLoginController.isEnabled,
-      fontSize: terminalPreferences.fontSize,
+      fontSize: configStore.config.desktop.fontSize,
+      configPath: configStore.url.path,
       onLaunchAtLoginChange: { [launchAtLoginController] enabled in
         launchAtLoginController.setEnabled(enabled)
       },
       onFontSizeChange: { [weak self] fontSize in
         guard let self else { return }
-        self.terminalPreferences.saveFontSize(fontSize)
-        self.terminal?.font = self.terminalFont(size: fontSize)
+        do {
+          try configStore.saveFontSize(fontSize)
+          self.terminal?.font = self.terminalFont(size: fontSize)
+        } catch {
+          self.showConfigErrorAlert(error)
+        }
       },
       onClockChoicesChange: { [weak self] choices in
         guard let self else { return }
-        self.clockPreferences.save(choices)
-        self.restartTerminal()
+        do {
+          try configStore.saveClocks(choices)
+          self.restartTerminal()
+        } catch {
+          self.showConfigErrorAlert(error)
+        }
+      },
+      onOpenConfig: { [weak self] in
+        guard let self else { return }
+        do {
+          try configStore.ensureFileExists()
+          NSWorkspace.shared.open(configStore.url)
+        } catch {
+          self.showConfigErrorAlert(error)
+        }
       }
     )
     settingsWindowController = controller
@@ -220,11 +249,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     environment["HOME"] = home
     environment["TERM"] = "xterm-256color"
     environment["COLORTERM"] = "truecolor"
-    if let data = try? JSONEncoder().encode(clockPreferences.selectedChoices),
-      let value = String(data: data, encoding: .utf8)
-    {
-      environment["STATS_CLOCKS"] = value
-    }
     environment["PATH"] = [
       "\(home)/.local/bin",
       "\(home)/.cargo/bin",
@@ -240,11 +264,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   }
 
   private func restartTerminal() {
-    guard let terminal, let executable, let home else { return }
+    guard let terminal, let executable, let home, let configStore else { return }
     isRestartingTerminal = true
     terminal.terminate()
     terminal.startProcess(
       executable: executable,
+      args: ["--config", configStore.url.path],
       environment: processEnvironment(home: home)
     )
     DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
@@ -359,6 +384,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     alert.messageText = "Stats is not installed"
     alert.informativeText =
       "Expected to find the stats executable at \(path). Run install.sh and try again."
+    alert.runModal()
+  }
+
+  private func showConfigErrorAlert(_ error: Error) {
+    let alert = NSAlert()
+    alert.alertStyle = .critical
+    alert.messageText = "Stats configuration error"
+    alert.informativeText = "\(error.localizedDescription)"
     alert.runModal()
   }
 }

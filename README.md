@@ -21,14 +21,26 @@ Stats requires macOS 11 or newer and currently provides prebuilt releases for Ap
 
 ### Homebrew (recommended)
 
-Copy and paste this command into Terminal:
+Choose the package that matches how you want to run Stats. Although both packages are named `stats`, the `--cask` option selects the desktop app while the command without `--cask` selects the CLI formula.
+
+#### Desktop app
+
+This installs `Stats.app` in `/Applications`:
 
 ```sh
 brew install --cask priyashpatil/tap/stats &&
   xattr -dr com.apple.quarantine /Applications/Stats.app
 ```
 
-The second command allows macOS to open the app after Homebrew has downloaded and verified it.
+The `brew install --cask` command installs the desktop app. The separate `xattr` command allows macOS to open that app after Homebrew has downloaded and verified it.
+
+#### CLI only
+
+This installs the `stats` command in Homebrew's binary directory. It does not install `Stats.app`:
+
+```sh
+brew install priyashpatil/tap/stats
+```
 
 ### Download
 
@@ -37,6 +49,8 @@ The second command allows macOS to open the app after Homebrew has downloaded an
 3. Unzip `Stats.app`, move it to `/Applications`, and open it.
 
 The downloaded app is self-contained and does not require Rust or Swift. Releases are ad-hoc signed but not Apple-notarized, so macOS may ask you to confirm the first launch in **System Settings → Privacy & Security**.
+
+For a CLI-only installation, download `stats-...-macOS-arm64.tar.gz` from the same release, extract `stats`, and place it in a directory in your `PATH`, such as `~/.local/bin`.
 
 ## Getting started
 
@@ -49,7 +63,7 @@ You can move and resize the dashboard. Stats remembers its position and restores
 
 ## Terminal use
 
-If you prefer a terminal, install the CLI with Cargo:
+If you prefer a terminal and did not install the Homebrew formula above, install the CLI with Cargo:
 
 ```sh
 cargo install --git https://github.com/priyashpatil/stats --locked
@@ -65,6 +79,54 @@ stats --once
 Run `stats --help` to see all CLI options. The AI usage sections require both `amp` and `codex` to be available in `PATH`.
 
 GPU utilization uses the `ioreg` metrics provided by macOS and requires no elevated permissions.
+
+## Configuration
+
+The terminal dashboard and macOS app share one human-editable TOML configuration file:
+
+```text
+~/.config/stats/config.toml
+```
+
+Stats respects `XDG_CONFIG_HOME` when it is set, so the complete default is `${XDG_CONFIG_HOME:-$HOME/.config}/stats/config.toml`. Print the active path with:
+
+```sh
+stats config path
+```
+
+Use a different file for one invocation with `stats --config /path/to/config.toml`. Command-line options override environment variables, which override values from the file. A missing file uses the built-in defaults; the macOS app creates it when you change a shared setting or choose **Settings → General → Open Configuration File**.
+
+Restart a running dashboard after editing the file directly so it reloads the new values.
+
+```toml
+version = 1
+
+[[clocks]]
+label = "Mumbai"
+timezone = "Asia/Kolkata"
+
+[[clocks]]
+label = "Paris"
+timezone = "Europe/Paris"
+
+[[clocks]]
+label = "Sydney"
+timezone = "Australia/Sydney"
+
+[[clocks]]
+label = "Seattle"
+timezone = "America/Los_Angeles"
+
+[refresh]
+codex_seconds = 60
+amp_seconds = 300
+storage_seconds = 300
+
+[desktop]
+font_size = 15
+```
+
+The config requires four clocks with valid IANA time zone identifiers. `desktop.font_size` controls the embedded terminal in the macOS app and accepts values from 10 through 24. Launch-at-login and window placement remain native macOS settings.
 
 ## Privacy and security
 
