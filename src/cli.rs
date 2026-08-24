@@ -55,7 +55,11 @@ pub(crate) fn parse_args() -> Result<Args, String> {
         });
     }
 
-    let config = config::load(&config_path)?;
+    let config = if mode == Mode::CodexUsageStatus {
+        Config::default()
+    } else {
+        config::load(&config_path)?
+    };
     let interval = interval
         .unwrap_or_else(|| env_u64("CODEX_USAGE_WATCH_INTERVAL", config.refresh.codex_seconds));
     let amp_interval = amp_interval
