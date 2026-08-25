@@ -57,7 +57,8 @@ For a CLI-only installation, download `stats-...-macOS-arm64.tar.gz` from the sa
 1. Open Stats from your Applications folder. The dashboard appears and a Stats icon is added to the menu bar.
 2. Use the menu bar icon to show or hide the dashboard, open **Settings**, or quit Stats.
 3. In **Settings → General**, choose whether Stats should launch when you sign in.
-4. In **Settings → Clocks**, search for a city or time zone for each of the four clocks.
+4. In **Settings → Sections**, choose which dashboard sections to display.
+5. In **Settings → Clocks**, search for a city or time zone for each of the four clocks.
 
 You can move and resize the dashboard. Stats remembers its position and restores it on the primary desktop the next time it opens.
 
@@ -76,7 +77,7 @@ Press `q` or Escape to quit. For a single, script-friendly snapshot, run:
 stats --once
 ```
 
-Run `stats --help` to see all CLI options. The AI usage sections require both `amp` and `codex` to be available in `PATH`.
+Run `stats --help` to see all CLI options. Enabled Amp and Codex sections require their corresponding CLIs to be available in `PATH`.
 
 Amp percentage meters show the remaining quota reported by `amp usage`. The non-Orb allowance is labeled with the subscription name, such as **Megawatt**, while **Amp Orbs** identifies the Orb allowance. Stats also shows renewal/reset text, Orb runtime, and the individual credit balance when Amp provides them. Orb runtime and credits are exact supplemental values rather than percentage charts because Amp does not report a corresponding limit for either value. Previously fetched Amp values show their last-updated time until a fresh CLI response is available.
 
@@ -100,7 +101,7 @@ stats config path
 
 Use a different file for one invocation with `stats --config /path/to/config.toml`. Command-line options override environment variables, which override values from the file. A missing file uses the built-in defaults; the macOS app creates it when you change a shared setting or choose **Settings → General → Open Configuration File**.
 
-Restart a running dashboard after editing the file directly so it reloads the new values.
+A running dashboard watches the config file and reloads automatically after settings changes or direct edits.
 
 ```toml
 version = 1
@@ -121,6 +122,13 @@ timezone = "Australia/Sydney"
 label = "Seattle"
 timezone = "America/Los_Angeles"
 
+[sections]
+clocks = true
+system = true
+ai = true
+amp_activity = true
+codex_activity = true
+
 [refresh]
 codex_seconds = 60
 amp_seconds = 300
@@ -128,9 +136,10 @@ storage_seconds = 300
 
 [desktop]
 font_size = 15
+show_scrollbar = false
 ```
 
-The config requires four clocks with valid IANA time zone identifiers. `desktop.font_size` controls the embedded terminal in the macOS app and accepts values from 10 through 24. Launch-at-login and window placement remain native macOS settings.
+The config requires four clocks with valid IANA time zone identifiers. The `[sections]` flags independently control the Clocks, System, AI quota, Amp Activity, and Codex Activity sections; all default to `true`. Disabled data sections are not refreshed. `desktop.font_size` controls the embedded terminal in the macOS app and accepts values from 10 through 24. `desktop.show_scrollbar` controls the dashboard scrollbar and defaults to `false`. Launch-at-login and window placement remain native macOS settings.
 
 ## Privacy and security
 

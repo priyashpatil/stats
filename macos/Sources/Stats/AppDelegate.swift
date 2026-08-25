@@ -10,7 +10,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
   private var configStore: StatsConfigStore?
   private var executable: String?
   private var home: String?
-  private var isRestartingTerminal = false
   private var aboutWindowController: NSWindowController?
   private var settingsWindowController: SettingsWindowController?
   private var showHideMenuItem: NSMenuItem?
@@ -65,7 +64,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     window.standardWindowButton(.zoomButton)?.isHidden = true
     window.delegate = self
     window.collectionBehavior = [.managed, .fullScreenNone]
-    window.contentMinSize = NSSize(width: defaultWidth, height: 420)
+    window.contentMinSize = NSSize(width: defaultWidth, height: 80)
     windowPlacementStore.restore(window)
     if window.frame.width < defaultWidth {
       var frame = window.frame
@@ -81,7 +80,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     )
     window.backgroundColor = background
 
-    let terminalFrame = (window.contentView?.bounds ?? .zero).insetBy(dx: 16, dy: 16)
+    let contentBounds = window.contentView?.bounds ?? .zero
+    let terminalFrame = dashboardTerminalFrame(
+      in: contentBounds,
+      showsScrollbar: configStore.config.desktop.showScrollbar
+    )
     let font = terminalFont(size: configStore.config.desktop.fontSize)
     let terminal = LocalProcessTerminalView(
       frame: terminalFrame,
@@ -111,11 +114,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     self.home = home
 
     showMainWindow(window)
-    terminal.startProcess(
-      executable: executable,
-      args: ["--config", configStore.url.path],
-      environment: processEnvironment(home: home)
-    )
+    startTerminalProcess()
   }
 
   func applicationWillTerminate(_ notification: Notification) {
@@ -146,14 +145,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
   func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
 
-  func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
+  func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
+    let prefix = "stats-layout:"
+    guard
+      title.hasPrefix(prefix),
+      let rows = Int(title.dropFirst(prefix.count)),
+      rows > 0
+    else { return }
+    resizeWindowToFit(source, rows: rows)
+  }
 
   func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
 
   func processTerminated(source: TerminalView, exitCode: Int32?) {
-    if !isRestartingTerminal {
-      NSApp.terminate(nil)
-    }
+    NSApp.terminate(nil)
   }
 
   func menuWillOpen(_ menu: NSMenu) {
@@ -200,6 +205,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       selectedClockChoices: configStore.config.clocks,
       launchesAtLogin: launchAtLoginController.isEnabled,
       fontSize: configStore.config.desktop.fontSize,
+      showsScrollbar: configStore.config.desktop.showScrollbar,
+      sections: configStore.config.sections,
       configPath: configStore.url.path,
       onLaunchAtLoginChange: { [launchAtLoginController] enabled in
         launchAtLoginController.setEnabled(enabled)
@@ -213,11 +220,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
           self.showConfigErrorAlert(error)
         }
       },
+      onShowScrollbarChange: { [weak self] showScrollbar in
+        guard let self else { return false }
+        do {
+          try configStore.saveShowScrollbar(showScrollbar)
+          self.layoutTerminal(showsScrollbar: showScrollbar)
+          return true
+        } catch {
+          self.showConfigErrorAlert(error)
+          return false
+        }
+      },
+      onSectionsChange: { [weak self] sections in
+        guard let self else { return false }
+        do {
+          try configStore.saveSections(sections)
+          return true
+        } catch {
+          self.showConfigErrorAlert(error)
+          return false
+        }
+      },
       onClockChoicesChange: { [weak self] choices in
         guard let self else { return }
         do {
           try configStore.saveClocks(choices)
-          self.restartTerminal()
         } catch {
           self.showConfigErrorAlert(error)
         }
@@ -243,10 +270,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       ?? NSFont.monospacedSystemFont(ofSize: CGFloat(size), weight: .regular)
   }
 
+  private func dashboardTerminalFrame(
+    in bounds: NSRect,
+    showsScrollbar: Bool
+  ) -> NSRect {
+    let rightInset: CGFloat = showsScrollbar ? 0 : 16
+    return NSRect(
+      x: bounds.minX + 16,
+      y: bounds.minY + 16,
+      width: max(0, bounds.width - 16 - rightInset),
+      height: max(0, bounds.height - 32)
+    )
+  }
+
+  private func layoutTerminal(showsScrollbar: Bool) {
+    guard let terminal, let bounds = window?.contentView?.bounds else { return }
+    terminal.frame = dashboardTerminalFrame(in: bounds, showsScrollbar: showsScrollbar)
+    terminal.setFrameSize(terminal.frame.size)
+  }
+
   private func processEnvironment(home: String) -> [String] {
     var environment = ProcessInfo.processInfo.environment
     environment.removeValue(forKey: "NO_COLOR")
     environment["HOME"] = home
+    environment["STATS_DESKTOP_LAYOUT"] = "1"
     environment["TERM"] = "xterm-256color"
     environment["COLORTERM"] = "truecolor"
     environment["PATH"] = [
@@ -263,18 +310,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     return environment.map { "\($0.key)=\($0.value)" }
   }
 
-  private func restartTerminal() {
+  private func startTerminalProcess() {
     guard let terminal, let executable, let home, let configStore else { return }
-    isRestartingTerminal = true
-    terminal.terminate()
     terminal.startProcess(
       executable: executable,
       args: ["--config", configStore.url.path],
       environment: processEnvironment(home: home)
     )
-    DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-      self?.isRestartingTerminal = false
-    }
+  }
+
+  private func resizeWindowToFit(_ terminal: LocalProcessTerminalView, rows: Int) {
+    guard
+      let window,
+      let contentView = window.contentView,
+      let screen = window.screen ?? NSScreen.screens.first
+    else { return }
+    let terminalRows = terminal.getTerminal().rows
+    guard terminalRows > 0 else { return }
+
+    let optimalTerminalFrame = terminal.getOptimalFrameSize()
+    let rowHeight = optimalTerminalFrame.height / CGFloat(terminalRows)
+    let verticalInsets = contentView.bounds.height - terminal.frame.height
+    let targetContentHeight = max(
+      window.contentMinSize.height,
+      CGFloat(rows) * rowHeight + verticalInsets
+    )
+    let contentRect = NSRect(
+      x: 0,
+      y: 0,
+      width: contentView.bounds.width,
+      height: targetContentHeight
+    )
+    let requestedFrame = window.frameRect(forContentRect: contentRect)
+    let targetHeight = min(requestedFrame.height, screen.visibleFrame.height)
+    guard abs(window.frame.height - targetHeight) >= rowHeight / 2 else { return }
+
+    var frame = window.frame
+    frame.origin.y = frame.maxY - targetHeight
+    frame.size.height = targetHeight
+    frame = window.constrainFrameRect(frame, to: screen)
+    window.setFrame(frame, display: true, animate: false)
+    windowPlacementStore.save(window)
   }
 
   private func showMainWindow(_ window: NSWindow) {

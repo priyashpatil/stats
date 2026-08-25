@@ -8,6 +8,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
   private var panes: [NSViewController] = []
   private let sidebarItems = [
     (title: "General", symbol: "gearshape"),
+    (title: "Sections", symbol: "rectangle.3.group"),
     (title: "Clocks", symbol: "clock"),
     (title: "About", symbol: "info.circle"),
   ]
@@ -15,8 +16,11 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
   private let clockMenuWidth: CGFloat = 360
   private var clockPickerPanel: ClockPickerPanel?
   private var selectedClockChoices: [ClockChoice]
+  private var selectedSections: SectionsConfig
   private let onLaunchAtLoginChange: (Bool) -> Bool
   private let onFontSizeChange: (Int) -> Void
+  private let onShowScrollbarChange: (Bool) -> Bool
+  private let onSectionsChange: (SectionsConfig) -> Bool
   private let onClockChoicesChange: ([ClockChoice]) -> Void
   private let onOpenConfig: () -> Void
 
@@ -24,15 +28,22 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     selectedClockChoices: [ClockChoice],
     launchesAtLogin: Bool,
     fontSize: Int,
+    showsScrollbar: Bool,
+    sections: SectionsConfig,
     configPath: String,
     onLaunchAtLoginChange: @escaping (Bool) -> Bool,
     onFontSizeChange: @escaping (Int) -> Void,
+    onShowScrollbarChange: @escaping (Bool) -> Bool,
+    onSectionsChange: @escaping (SectionsConfig) -> Bool,
     onClockChoicesChange: @escaping ([ClockChoice]) -> Void,
     onOpenConfig: @escaping () -> Void
   ) {
     self.selectedClockChoices = selectedClockChoices
+    self.selectedSections = sections
     self.onLaunchAtLoginChange = onLaunchAtLoginChange
     self.onFontSizeChange = onFontSizeChange
+    self.onShowScrollbarChange = onShowScrollbarChange
+    self.onSectionsChange = onSectionsChange
     self.onClockChoicesChange = onClockChoicesChange
     self.onOpenConfig = onOpenConfig
     let window = NSWindow(
@@ -49,6 +60,8 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
       selectedClockChoices: selectedClockChoices,
       launchesAtLogin: launchesAtLogin,
       fontSize: fontSize,
+      showsScrollbar: showsScrollbar,
+      sections: sections,
       configPath: configPath
     )
   }
@@ -61,14 +74,18 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     selectedClockChoices: [ClockChoice],
     launchesAtLogin: Bool,
     fontSize: Int,
+    showsScrollbar: Bool,
+    sections: SectionsConfig,
     configPath: String
   ) {
     panes = [
       generalViewController(
         launchesAtLogin: launchesAtLogin,
         fontSize: fontSize,
+        showsScrollbar: showsScrollbar,
         configPath: configPath
       ),
+      sectionsViewController(sections: sections),
       clocksViewController(selectedClockChoices: selectedClockChoices),
       AboutViewController(),
     ]
@@ -154,9 +171,52 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     showPane(at: 0)
   }
 
+  private func sectionsViewController(sections: SectionsConfig) -> NSViewController {
+    let controller = settingsPane()
+    let title = NSTextField(labelWithString: "Sections")
+    title.font = .systemFont(ofSize: 22, weight: .semibold)
+    let help = NSTextField(
+      wrappingLabelWithString:
+        "Choose which sections Stats displays. Disabled data sections are not refreshed."
+    )
+    help.textColor = .secondaryLabelColor
+
+    let choices: [(String, String, Bool)] = [
+      ("Clocks", "clocks", sections.clocks),
+      ("System", "system", sections.system),
+      ("AI", "ai", sections.ai),
+      ("Amp Activity", "ampActivity", sections.ampActivity),
+      ("Codex Activity", "codexActivity", sections.codexActivity),
+    ]
+    let checkboxes = choices.map { label, identifier, enabled in
+      let checkbox = NSButton(
+        checkboxWithTitle: label,
+        target: self,
+        action: #selector(sectionChanged(_:))
+      )
+      checkbox.identifier = NSUserInterfaceItemIdentifier(identifier)
+      checkbox.state = enabled ? .on : .off
+      return checkbox
+    }
+    let sectionStack = NSStackView(views: checkboxes)
+    sectionStack.orientation = .vertical
+    sectionStack.alignment = .leading
+    sectionStack.spacing = 10
+
+    let stack = NSStackView(views: [title, help, sectionStack])
+    stack.orientation = .vertical
+    stack.alignment = .leading
+    stack.spacing = 10
+    stack.setCustomSpacing(8, after: title)
+    stack.setCustomSpacing(20, after: help)
+    install(stack, in: controller.view)
+    return controller
+  }
+
   private func generalViewController(
     launchesAtLogin: Bool,
     fontSize: Int,
+    showsScrollbar: Bool,
     configPath: String
   ) -> NSViewController {
     let controller = settingsPane()
@@ -186,7 +246,15 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
       wrappingLabelWithString: "Adjust the text size used in the Stats terminal."
     )
     fontSizeHelp.textColor = .secondaryLabelColor
-    let terminalSection = NSStackView(views: [terminalHeading, fontSizeRow, fontSizeHelp])
+    let scrollbarCheckbox = NSButton(
+      checkboxWithTitle: "Show dashboard scrollbar",
+      target: self,
+      action: #selector(showScrollbarChanged(_:))
+    )
+    scrollbarCheckbox.state = showsScrollbar ? .on : .off
+    let terminalSection = NSStackView(
+      views: [terminalHeading, fontSizeRow, fontSizeHelp, scrollbarCheckbox]
+    )
     terminalSection.orientation = .vertical
     terminalSection.alignment = .leading
     terminalSection.spacing = 8
@@ -385,6 +453,31 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
   @objc private func fontSizeChanged(_ sender: NSPopUpButton) {
     onFontSizeChange(sender.selectedTag())
+  }
+
+  @objc private func showScrollbarChanged(_ sender: NSButton) {
+    let requested = sender.state == .on
+    if !onShowScrollbarChange(requested) {
+      sender.state = requested ? .off : .on
+    }
+  }
+
+  @objc private func sectionChanged(_ sender: NSButton) {
+    var updated = selectedSections
+    let enabled = sender.state == .on
+    switch sender.identifier?.rawValue {
+    case "clocks": updated.clocks = enabled
+    case "system": updated.system = enabled
+    case "ai": updated.ai = enabled
+    case "ampActivity": updated.ampActivity = enabled
+    case "codexActivity": updated.codexActivity = enabled
+    default: return
+    }
+    if onSectionsChange(updated) {
+      selectedSections = updated
+    } else {
+      sender.state = enabled ? .off : .on
+    }
   }
 
   @objc private func openConfig(_ sender: Any?) {

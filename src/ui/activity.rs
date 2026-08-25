@@ -13,12 +13,7 @@ use crate::model::{
 const ACTIVITY_MIN_GUTTER_WIDTH: usize = 5;
 const AMP_DETAIL_DAYS: u64 = 30;
 
-pub(super) fn amp_activity_history_days(dashboard_width: usize, utc_today: NaiveDate) -> usize {
-    let panel_width = if dashboard_width < 50 {
-        dashboard_width
-    } else {
-        (dashboard_width - 2).div_ceil(2)
-    };
+pub(super) fn amp_activity_history_days(panel_width: usize, utc_today: NaiveDate) -> usize {
     activity_week_capacity(panel_width)
         .saturating_sub(1)
         .saturating_mul(7)
@@ -1157,7 +1152,7 @@ mod tests {
     fn amp_activity_history_matches_the_full_visible_grid() {
         let today = date("2026-08-02");
         assert_eq!(amp_activity_history_days(40, today), 120);
-        assert_eq!(amp_activity_history_days(58, today), 78);
+        assert_eq!(amp_activity_history_days(58, today), 183);
 
         let usage = CodexActivityUsage {
             daily_usage_buckets: Some(vec![CodexDailyUsageBucket {

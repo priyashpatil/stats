@@ -15,8 +15,19 @@ const CONFIG_VERSION: u64 = 1;
 pub(crate) struct Config {
     pub(crate) version: u64,
     pub(crate) clocks: Vec<Clock>,
+    pub(crate) sections: SectionsConfig,
     pub(crate) refresh: RefreshConfig,
     pub(crate) desktop: DesktopConfig,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(default)]
+pub(crate) struct SectionsConfig {
+    pub(crate) clocks: bool,
+    pub(crate) system: bool,
+    pub(crate) ai: bool,
+    pub(crate) amp_activity: bool,
+    pub(crate) codex_activity: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -31,6 +42,7 @@ pub(crate) struct RefreshConfig {
 #[serde(default)]
 pub(crate) struct DesktopConfig {
     pub(crate) font_size: u64,
+    pub(crate) show_scrollbar: bool,
 }
 
 impl Default for Config {
@@ -38,8 +50,21 @@ impl Default for Config {
         Self {
             version: CONFIG_VERSION,
             clocks: default_clocks(),
+            sections: SectionsConfig::default(),
             refresh: RefreshConfig::default(),
             desktop: DesktopConfig::default(),
+        }
+    }
+}
+
+impl Default for SectionsConfig {
+    fn default() -> Self {
+        Self {
+            clocks: true,
+            system: true,
+            ai: true,
+            amp_activity: true,
+            codex_activity: true,
         }
     }
 }
@@ -56,7 +81,10 @@ impl Default for RefreshConfig {
 
 impl Default for DesktopConfig {
     fn default() -> Self {
-        Self { font_size: 15 }
+        Self {
+            font_size: 15,
+            show_scrollbar: false,
+        }
     }
 }
 
@@ -171,7 +199,9 @@ mod tests {
         let config = load(&path).unwrap();
         assert_eq!(config.version, 1);
         assert_eq!(config.clocks.len(), 4);
+        assert!(config.sections.amp_activity);
         assert_eq!(config.desktop.font_size, 15);
+        assert!(!config.desktop.show_scrollbar);
     }
 
     #[test]
@@ -195,6 +225,13 @@ timezone = "Asia/Tokyo"
 label = "Sydney"
 timezone = "Australia/Sydney"
 
+[sections]
+clocks = false
+system = true
+ai = false
+amp_activity = false
+codex_activity = true
+
 [refresh]
 codex_seconds = 10
 amp_seconds = 120
@@ -202,13 +239,19 @@ storage_seconds = 180
 
 [desktop]
 font_size = 18
+show_scrollbar = false
 "#,
         );
 
         let config = load(&path).unwrap();
         assert_eq!(config.clocks[0].label, "London");
+        assert!(!config.sections.clocks);
+        assert!(!config.sections.ai);
+        assert!(!config.sections.amp_activity);
+        assert!(config.sections.codex_activity);
         assert_eq!(config.refresh.codex_seconds, 10);
         assert_eq!(config.desktop.font_size, 18);
+        assert!(!config.desktop.show_scrollbar);
         fs::remove_file(path).unwrap();
     }
 

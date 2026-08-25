@@ -37,14 +37,21 @@ struct StatsConfigTests {
     ]
 
     try store.saveClocks(clocks)
+    let sections = SectionsConfig(ai: false, ampActivity: false)
+    try store.saveSections(sections)
     try store.saveFontSize(18)
+    try store.saveShowScrollbar(false)
 
     let restored = try StatsConfigStore(url: fixture.url, defaults: fixture.defaults)
     #expect(restored.config.clocks.map(\.id) == clocks.map(\.id))
+    #expect(restored.config.sections == sections)
     #expect(restored.config.desktop.fontSize == 18)
+    #expect(restored.config.desktop.showScrollbar == false)
     let contents = try String(contentsOf: fixture.url, encoding: .utf8)
     #expect(contents.contains("[[clocks]]"))
+    #expect(contents.contains("amp_activity = false"))
     #expect(contents.contains("font_size = 18"))
+    #expect(contents.contains("show_scrollbar = false"))
   }
 
   @Test("Legacy defaults migrate once when no config exists")

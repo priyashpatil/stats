@@ -51,6 +51,8 @@ pub(crate) fn parse_args() -> Result<Args, String> {
             amp_interval: 300,
             storage_interval: 300,
             clocks: Config::default().clocks,
+            sections: Config::default().sections,
+            show_scrollbar: Config::default().desktop.show_scrollbar,
             config_path,
         });
     }
@@ -71,6 +73,8 @@ pub(crate) fn parse_args() -> Result<Args, String> {
         )
     });
     let clocks = configured_clocks(config.clocks);
+    let sections = config.sections;
+    let show_scrollbar = config.desktop.show_scrollbar;
 
     if interval < 5 {
         return Err("interval must be an integer >= 5 seconds".into());
@@ -86,6 +90,8 @@ pub(crate) fn parse_args() -> Result<Args, String> {
         amp_interval,
         storage_interval: storage_interval.max(60),
         clocks,
+        sections,
+        show_scrollbar,
         config_path,
     })
 }

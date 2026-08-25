@@ -1,21 +1,25 @@
-use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+use std::{env, io};
+use std::{fs, path::Path, time::SystemTime};
 
 use chrono::{DateTime, Local, NaiveDate, TimeZone, Utc};
 use chrono_tz::Tz;
 use crossterm::cursor::{Hide, MoveTo, Show};
-use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
-    Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, SetTitle, disable_raw_mode,
+    enable_raw_mode,
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
 use ratatui::{Frame, Terminal};
 use serde_json::Value;
 
@@ -29,7 +33,6 @@ struct AiQuotaRow {
     label: String,
     percent_left: f64,
     reset: Option<String>,
-    suffix: Option<String>,
 }
 
 fn equal_column_widths(width: usize, count: usize) -> Vec<usize> {
@@ -46,6 +49,7 @@ use crate::model::{
 use crate::providers::codex::{codex_weekly_window, left_percent, ordered_buckets};
 
 mod activity;
+use crate::config::SectionsConfig;
 use activity::{
     amp_activity_history_days, amp_activity_sync_message, render_amp_activity,
     render_codex_activity,
@@ -55,7 +59,10 @@ pub(crate) fn run_tui(
     state: &Arc<Mutex<AppState>>,
     stop: &Arc<AtomicBool>,
     clocks: &[Clock],
-) -> Result<(), String> {
+    sections: &SectionsConfig,
+    show_scrollbar: bool,
+    config_path: &Path,
+) -> Result<bool, String> {
     enable_raw_mode().map_err(|err| err.to_string())?;
     let mut stdout = io::stdout();
     execute!(
@@ -70,22 +77,77 @@ pub(crate) fn run_tui(
     .map_err(|err| err.to_string())?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).map_err(|err| err.to_string())?;
+    let reports_desktop_layout = env::var_os("STATS_DESKTOP_LAYOUT").is_some();
+    let mut reported_rows = None;
+    let mut scroll_offset = 0;
+    let mut max_scroll = 0;
+    let mut page_rows = 1;
+    let initial_config_revision = config_revision(config_path);
     let result = loop {
+        let mut content_rows = 0;
         terminal
-            .draw(|frame| draw(frame, state, clocks))
+            .draw(|frame| {
+                (content_rows, max_scroll, page_rows) = draw(
+                    frame,
+                    state,
+                    clocks,
+                    sections,
+                    show_scrollbar,
+                    &mut scroll_offset,
+                )
+            })
             .map_err(|err| err.to_string())?;
-        if event::poll(Duration::from_millis(200)).map_err(|err| err.to_string())?
-            && let Event::Key(key) = event::read().map_err(|err| err.to_string())?
-            && matches!(
-                key.code,
-                KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc
+        let content_rows = content_rows.max(1);
+        if reports_desktop_layout && reported_rows != Some(content_rows) {
+            execute!(
+                terminal.backend_mut(),
+                SetTitle(format!("stats-layout:{content_rows}"))
             )
-        {
-            stop.store(true, Ordering::Relaxed);
-            break Ok(());
+            .map_err(|err| err.to_string())?;
+            reported_rows = Some(content_rows);
+        }
+        if event::poll(Duration::from_millis(200)).map_err(|err| err.to_string())? {
+            match event::read().map_err(|err| err.to_string())? {
+                Event::Key(key)
+                    if matches!(
+                        key.code,
+                        KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc
+                    ) =>
+                {
+                    stop.store(true, Ordering::Relaxed);
+                    break Ok(false);
+                }
+                Event::Key(key) => match key.code {
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        scroll_offset = (scroll_offset + 1).min(max_scroll)
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        scroll_offset = scroll_offset.saturating_sub(1)
+                    }
+                    KeyCode::PageDown => {
+                        scroll_offset = (scroll_offset + page_rows).min(max_scroll)
+                    }
+                    KeyCode::PageUp => scroll_offset = scroll_offset.saturating_sub(page_rows),
+                    KeyCode::Home => scroll_offset = 0,
+                    KeyCode::End => scroll_offset = max_scroll,
+                    _ => {}
+                },
+                Event::Mouse(mouse) => match mouse.kind {
+                    MouseEventKind::ScrollDown => {
+                        scroll_offset = (scroll_offset + 3).min(max_scroll)
+                    }
+                    MouseEventKind::ScrollUp => scroll_offset = scroll_offset.saturating_sub(3),
+                    _ => {}
+                },
+                _ => {}
+            }
         }
         if stop.load(Ordering::Relaxed) {
-            break Ok(());
+            break Ok(false);
+        }
+        if config_revision(config_path) != initial_config_revision {
+            stop.store(true, Ordering::Relaxed);
+            break Ok(true);
         }
     };
     disable_raw_mode().map_err(|err| err.to_string())?;
@@ -100,43 +162,89 @@ pub(crate) fn run_tui(
     result
 }
 
-fn draw(frame: &mut Frame, state: &Arc<Mutex<AppState>>, clocks: &[Clock]) {
-    let area = frame.area();
-    let snapshot = {
-        let mut state = state.lock().unwrap();
-        state.amp_activity_history_days =
-            amp_activity_history_days(area.width as usize, Utc::now().date_naive());
-        state.clone()
-    };
-    let lines = stats_lines(&snapshot, clocks, area.width as usize);
-    let paragraph = Paragraph::new(Text::from(lines));
-    frame.render_widget(paragraph, area);
+fn config_revision(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
 }
 
-fn stats_lines(state: &AppState, clocks: &[Clock], width: usize) -> Vec<Line<'static>> {
+fn draw(
+    frame: &mut Frame,
+    state: &Arc<Mutex<AppState>>,
+    clocks: &[Clock],
+    sections: &SectionsConfig,
+    show_scrollbar: bool,
+    scroll_offset: &mut usize,
+) -> (usize, usize, usize) {
+    let area = frame.area();
+    let mut content_area = area;
+    if show_scrollbar {
+        content_area.width = content_area.width.saturating_sub(2);
+    }
+    let snapshot = {
+        let mut state = state.lock().unwrap();
+        if sections.amp_activity {
+            state.amp_activity_history_days =
+                amp_activity_history_days(content_area.width as usize, Utc::now().date_naive());
+        }
+        state.clone()
+    };
+    let lines = stats_lines(&snapshot, clocks, sections, content_area.width as usize);
+    let content_rows = lines.len();
+    let page_rows = area.height as usize;
+    let max_scroll = content_rows.saturating_sub(page_rows);
+    *scroll_offset = (*scroll_offset).min(max_scroll);
+    let paragraph = Paragraph::new(Text::from(lines)).scroll((*scroll_offset as u16, 0));
+    frame.render_widget(paragraph, content_area);
+    if show_scrollbar && max_scroll > 0 {
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .track_symbol(Some("│"))
+            .track_style(Style::default().fg(Color::DarkGray))
+            .thumb_symbol("┃")
+            .thumb_style(Style::default().fg(Color::Gray));
+        let mut scrollbar_state = ScrollbarState::new(content_rows)
+            .position(*scroll_offset)
+            .viewport_content_length(page_rows);
+        frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+    }
+    (content_rows, max_scroll, page_rows.saturating_sub(1).max(1))
+}
+
+fn stats_lines(
+    state: &AppState,
+    clocks: &[Clock],
+    sections: &SectionsConfig,
+    width: usize,
+) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    render_alerts(&mut lines, state, width, Utc::now().date_naive());
-    render_clocks(&mut lines, clocks, width);
-    render_system(&mut lines, &state.system, width);
-    render_ai(
+    if sections.amp_activity {
+        render_alerts(&mut lines, state, width, Utc::now().date_naive());
+    }
+    if sections.clocks {
+        render_clocks(&mut lines, clocks, width);
+    }
+    if sections.system {
+        render_system(&mut lines, &state.system, width);
+    }
+    if sections.ai {
+        render_ai_quotas(&mut lines, &state.amp, &state.codex, width);
+    }
+    render_activity_sections(
         &mut lines,
-        &state.amp,
         &state.amp_activity,
-        &state.codex,
         &state.codex_activity,
+        sections.amp_activity,
+        sections.codex_activity,
         width,
+        Utc::now().date_naive(),
     );
     lines
 }
 
 fn render_alerts(lines: &mut Vec<Line<'static>>, state: &AppState, width: usize, today: NaiveDate) {
-    const ACTIVITY_GAP: usize = 2;
-    let activity_width = if width < 50 {
-        width
-    } else {
-        equal_column_widths(width - ACTIVITY_GAP, 2)[0]
-    };
-    let alerts = amp_activity_sync_message(&state.amp_activity, activity_width, today)
+    let alerts = amp_activity_sync_message(&state.amp_activity, width, today)
         .map(|message| (message, Color::Yellow))
         .into_iter()
         .collect::<Vec<_>>();
@@ -237,33 +345,11 @@ fn render_system(lines: &mut Vec<Line<'static>>, system: &SystemMetrics, width: 
     lines.push(Line::default());
 }
 
-fn render_ai(
+fn render_ai_quotas(
     lines: &mut Vec<Line<'static>>,
     amp: &ProviderState<AmpUsage>,
-    amp_activity: &ProviderState<AmpActivityUsage>,
     codex: &ProviderState<Value>,
-    codex_activity: &ProviderState<CodexActivityUsage>,
     width: usize,
-) {
-    render_ai_at(
-        lines,
-        amp,
-        amp_activity,
-        codex,
-        codex_activity,
-        width,
-        Utc::now().date_naive(),
-    );
-}
-
-fn render_ai_at(
-    lines: &mut Vec<Line<'static>>,
-    amp: &ProviderState<AmpUsage>,
-    amp_activity: &ProviderState<AmpActivityUsage>,
-    codex: &ProviderState<Value>,
-    codex_activity: &ProviderState<CodexActivityUsage>,
-    width: usize,
-    today: NaiveDate,
 ) {
     section(lines, "AI", "", width);
     lines.push(Line::default());
@@ -274,73 +360,56 @@ fn render_ai_at(
     collect_amp_ai_rows(&mut rows, &mut statuses, &mut details, amp);
     collect_codex_ai_rows(&mut rows, &mut statuses, codex);
 
-    for status in statuses {
-        lines.push(status);
-    }
-
+    lines.extend(statuses);
     if !rows.is_empty() {
         render_ai_quota_rows(lines, rows, width);
     }
     lines.extend(details);
     lines.push(Line::default());
-    render_activity_sections(lines, amp_activity, codex_activity, width, today);
+}
 
-    lines.push(Line::default());
+#[cfg(test)]
+fn render_ai_at(
+    lines: &mut Vec<Line<'static>>,
+    amp: &ProviderState<AmpUsage>,
+    amp_activity: &ProviderState<AmpActivityUsage>,
+    codex: &ProviderState<Value>,
+    codex_activity: &ProviderState<CodexActivityUsage>,
+    width: usize,
+    today: NaiveDate,
+) {
+    render_ai_quotas(lines, amp, codex, width);
+    render_activity_sections(
+        lines,
+        amp_activity,
+        codex_activity,
+        true,
+        true,
+        width,
+        today,
+    );
 }
 
 fn render_activity_sections(
     lines: &mut Vec<Line<'static>>,
     amp: &ProviderState<AmpActivityUsage>,
     codex: &ProviderState<CodexActivityUsage>,
+    amp_enabled: bool,
+    codex_enabled: bool,
     width: usize,
     today: NaiveDate,
 ) {
-    const GAP: usize = 2;
-    if width < 50 {
+    if amp_enabled {
         section(lines, "Amp Activity", "", width);
         lines.push(Line::default());
         render_amp_activity(lines, amp, width, today);
         lines.push(Line::default());
+    }
+    if codex_enabled {
         section(lines, "Codex Activity", "", width);
         lines.push(Line::default());
         render_codex_activity(lines, codex, width, today);
-        return;
-    }
-
-    let widths = equal_column_widths(width - GAP, 2);
-    let mut amp_heading = Vec::new();
-    section(&mut amp_heading, "Amp Activity", "", widths[0]);
-    let mut codex_heading = Vec::new();
-    section(&mut codex_heading, "Codex Activity", "", widths[1]);
-    let mut heading = clipped_line_spans(&amp_heading[0], widths[0]);
-    let used = heading
-        .iter()
-        .map(|span| span.content.chars().count())
-        .sum::<usize>();
-    heading.push(Span::raw(" ".repeat(widths[0].saturating_sub(used) + GAP)));
-    heading.extend(clipped_line_spans(&codex_heading[0], widths[1]));
-    lines.push(Line::from(heading));
-    lines.push(Line::default());
-
-    let mut amp_lines = Vec::new();
-    render_amp_activity(&mut amp_lines, amp, widths[0], today);
-    let mut codex_lines = Vec::new();
-    render_codex_activity(&mut codex_lines, codex, widths[1], today);
-
-    for index in 0..amp_lines.len().max(codex_lines.len()) {
-        let mut spans = amp_lines
-            .get(index)
-            .map(|line| clipped_line_spans(line, widths[0]))
-            .unwrap_or_default();
-        let used = spans
-            .iter()
-            .map(|span| span.content.chars().count())
-            .sum::<usize>();
-        spans.push(Span::raw(" ".repeat(widths[0].saturating_sub(used) + GAP)));
-        if let Some(line) = codex_lines.get(index) {
-            spans.extend(clipped_line_spans(line, widths[1]));
-        }
-        lines.push(Line::from(spans));
+        lines.push(Line::default());
     }
 }
 
@@ -366,21 +435,6 @@ fn wrapped_alert_rows(message: &str, color: Color, width: usize) -> Vec<Line<'st
     wrapped
         .into_iter()
         .map(|content| Line::from(span(content, color, true)))
-        .collect()
-}
-
-fn clipped_line_spans(line: &Line<'_>, width: usize) -> Vec<Span<'static>> {
-    let mut remaining = width;
-    line.spans
-        .iter()
-        .filter_map(|span| {
-            if remaining == 0 {
-                return None;
-            }
-            let content = span.content.chars().take(remaining).collect::<String>();
-            remaining = remaining.saturating_sub(content.chars().count());
-            Some(Span::styled(content, span.style))
-        })
         .collect()
 }
 
@@ -415,7 +469,6 @@ fn collect_amp_ai_rows(
             label: result.plan.clone().unwrap_or_else(|| "Amp".into()),
             percent_left,
             reset: result.reset.as_deref().map(amp_compact_reset_label),
-            suffix: Some("Other usage".into()),
         });
     }
     if let Some(percent_left) = result.orb_percent_remaining {
@@ -423,7 +476,6 @@ fn collect_amp_ai_rows(
             label: "Amp Orbs".into(),
             percent_left,
             reset: result.reset.as_deref().map(amp_compact_reset_label),
-            suffix: result.orb_runtime.clone(),
         });
     }
     if let Some(credits) = &result.individual_credits_remaining {
@@ -497,7 +549,6 @@ fn collect_codex_ai_rows(
                 label: "Codex Pro".into(),
                 percent_left: left_percent(window),
                 reset: Some(codex_compact_reset_label(window)),
-                suffix: None,
             });
         }
     }
@@ -563,11 +614,7 @@ fn render_ai_quota_rows(lines: &mut Vec<Line<'static>>, rows: Vec<AiQuotaRow>, w
 }
 
 fn ai_quota_tail(row: &AiQuotaRow) -> String {
-    [row.suffix.as_deref(), row.reset.as_deref()]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join(" · ")
+    row.reset.clone().unwrap_or_default()
 }
 
 fn ai_status_row(label: &str, message: impl Into<String>, color: Color) -> Line<'static> {
@@ -727,14 +774,15 @@ fn dim<T: Into<String>>(value: T) -> Span<'static> {
     )
 }
 
-pub(crate) fn print_once(state: &Arc<Mutex<AppState>>) {
+pub(crate) fn print_once(state: &Arc<Mutex<AppState>>, sections: &SectionsConfig) {
     let started_at = Local::now();
     let deadline = Instant::now() + Duration::from_secs(25);
     while Instant::now() < deadline {
         let ready = {
             let state = state.lock().unwrap();
-            provider_ready_for_once(&state.amp, &started_at)
-                && provider_ready_for_once(&state.codex, &started_at)
+            !sections.ai
+                || provider_ready_for_once(&state.amp, &started_at)
+                    && provider_ready_for_once(&state.codex, &started_at)
         };
         if ready {
             break;
@@ -744,42 +792,46 @@ pub(crate) fn print_once(state: &Arc<Mutex<AppState>>) {
 
     let state = state.lock().unwrap().clone();
     println!("Stats");
-    let gpu = state
-        .system
-        .gpu_percent
-        .map(|value| format!("{value:.0}%"))
-        .unwrap_or_else(|| "sampling".into());
-    println!(
-        "CPU {:.0}% RAM {:.0}% GPU {gpu}",
-        state.system.cpu_percent.unwrap_or_default(),
-        state.system.ram_percent
-    );
-    println!(
-        "Network down {} up {}",
-        rate_label(state.system.net_down_rate),
-        rate_label(state.system.net_up_rate)
-    );
-    println!("Storage {:.0}% free", state.system.storage_percent_free);
-    for line in amp_once_lines(&state.amp) {
-        println!("{line}");
+    if sections.system {
+        let gpu = state
+            .system
+            .gpu_percent
+            .map(|value| format!("{value:.0}%"))
+            .unwrap_or_else(|| "sampling".into());
+        println!(
+            "CPU {:.0}% RAM {:.0}% GPU {gpu}",
+            state.system.cpu_percent.unwrap_or_default(),
+            state.system.ram_percent
+        );
+        println!(
+            "Network down {} up {}",
+            rate_label(state.system.net_down_rate),
+            rate_label(state.system.net_up_rate)
+        );
+        println!("Storage {:.0}% free", state.system.storage_percent_free);
     }
-    if let Some(error) = &state.codex.error {
-        println!("Codex error: {error}");
-    } else if let Some(result) = &state.codex.result {
-        for snapshot in ordered_buckets(result) {
-            let plan = snapshot
-                .get("planType")
-                .and_then(Value::as_str)
-                .map(|plan| if plan == "prolite" { "Pro" } else { plan })
-                .unwrap_or("");
-            println!("Codex {plan}");
-            if let Some(window) = codex_weekly_window(snapshot) {
-                println!(
-                    "{} {:.0}% left {}",
-                    window_label(window),
-                    left_percent(window),
-                    reset_label(window)
-                );
+    if sections.ai {
+        for line in amp_once_lines(&state.amp) {
+            println!("{line}");
+        }
+        if let Some(error) = &state.codex.error {
+            println!("Codex error: {error}");
+        } else if let Some(result) = &state.codex.result {
+            for snapshot in ordered_buckets(result) {
+                let plan = snapshot
+                    .get("planType")
+                    .and_then(Value::as_str)
+                    .map(|plan| if plan == "prolite" { "Pro" } else { plan })
+                    .unwrap_or("");
+                println!("Codex {plan}");
+                if let Some(window) = codex_weekly_window(snapshot) {
+                    println!(
+                        "{} {:.0}% left {}",
+                        window_label(window),
+                        left_percent(window),
+                        reset_label(window)
+                    );
+                }
             }
         }
     }
@@ -986,7 +1038,6 @@ mod tests {
             label: "Codex Pro".into(),
             percent_left: 96.0,
             reset: Some("09:48am 8 Aug".into()),
-            suffix: None,
         };
 
         for width in [9, 10, 11, 12, 18, 19] {
@@ -1011,13 +1062,11 @@ mod tests {
                 label: "Megawatt".into(),
                 percent_left: 100.0,
                 reset: Some("22 Sep".into()),
-                suffix: None,
             },
             AiQuotaRow {
                 label: "Codex Pro".into(),
                 percent_left: 95.0,
                 reset: Some("27 Aug".into()),
-                suffix: None,
             },
         ];
         let mut lines = Vec::new();
@@ -1078,6 +1127,26 @@ mod tests {
         let mut empty = Vec::new();
         render_alerts(&mut empty, &AppState::default(), 40, today);
         assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn renders_only_enabled_sections() {
+        let sections = SectionsConfig {
+            clocks: false,
+            system: false,
+            ai: false,
+            amp_activity: false,
+            codex_activity: true,
+        };
+
+        let lines = stats_lines(&AppState::default(), &[], &sections, 58);
+        let text = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
+
+        assert!(text.contains("CODEX ACTIVITY"));
+        assert!(!text.contains("CLOCKS"));
+        assert!(!text.contains("SYSTEM"));
+        assert!(!text.contains("\nAI "));
+        assert!(!text.contains("AMP ACTIVITY"));
     }
 
     #[test]
@@ -1154,12 +1223,15 @@ mod tests {
         assert!(orbs < quota);
         assert!(quota < credits);
         assert!(text[orbs].contains("65% left"));
-        assert!(text[orbs].contains("1h20m12.210s"));
+        assert!(!text[orbs].contains("1h20m12.210s"));
         assert!(text[megawatt].contains("Megawatt"));
-        assert!(text[megawatt].contains("Other usage"));
+        assert!(!text[megawatt].contains("Other usage"));
+        let reset = amp_compact_reset_label("resets upon renewal in 1 month");
+        assert!(text[megawatt].contains(&reset));
+        assert!(text[orbs].contains(&reset));
         assert!(text[credits].contains("$1.01 remaining"));
         assert!(credits < amp_activity);
-        assert_eq!(amp_activity, codex_activity);
+        assert!(amp_activity < codex_activity);
         assert!(text[codex_activity + 2].contains("Jul"));
         assert!(text[codex_activity + 3].contains("Sun"));
     }

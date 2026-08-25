@@ -6,17 +6,20 @@ struct StatsConfig: Codable {
 
   var version: Int
   var clocks: [ClockChoice]
+  var sections: SectionsConfig
   var refresh: RefreshConfig
   var desktop: DesktopConfig
 
   init(
     version: Int = currentVersion,
     clocks: [ClockChoice] = ClockChoice.defaults,
+    sections: SectionsConfig = SectionsConfig(),
     refresh: RefreshConfig = RefreshConfig(),
     desktop: DesktopConfig = DesktopConfig()
   ) {
     self.version = version
     self.clocks = clocks
+    self.sections = sections
     self.refresh = refresh
     self.desktop = desktop
   }
@@ -26,10 +29,51 @@ struct StatsConfig: Codable {
     version = try container.decodeIfPresent(Int.self, forKey: .version) ?? Self.currentVersion
     clocks = try container.decodeIfPresent([ClockChoice].self, forKey: .clocks)
       ?? ClockChoice.defaults
+    sections = try container.decodeIfPresent(SectionsConfig.self, forKey: .sections)
+      ?? SectionsConfig()
     refresh = try container.decodeIfPresent(RefreshConfig.self, forKey: .refresh)
       ?? RefreshConfig()
     desktop = try container.decodeIfPresent(DesktopConfig.self, forKey: .desktop)
       ?? DesktopConfig()
+  }
+}
+
+struct SectionsConfig: Codable, Equatable {
+  var clocks: Bool
+  var system: Bool
+  var ai: Bool
+  var ampActivity: Bool
+  var codexActivity: Bool
+
+  init(
+    clocks: Bool = true,
+    system: Bool = true,
+    ai: Bool = true,
+    ampActivity: Bool = true,
+    codexActivity: Bool = true
+  ) {
+    self.clocks = clocks
+    self.system = system
+    self.ai = ai
+    self.ampActivity = ampActivity
+    self.codexActivity = codexActivity
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case clocks
+    case system
+    case ai
+    case ampActivity = "amp_activity"
+    case codexActivity = "codex_activity"
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    clocks = try container.decodeIfPresent(Bool.self, forKey: .clocks) ?? true
+    system = try container.decodeIfPresent(Bool.self, forKey: .system) ?? true
+    ai = try container.decodeIfPresent(Bool.self, forKey: .ai) ?? true
+    ampActivity = try container.decodeIfPresent(Bool.self, forKey: .ampActivity) ?? true
+    codexActivity = try container.decodeIfPresent(Bool.self, forKey: .codexActivity) ?? true
   }
 }
 
@@ -60,19 +104,26 @@ struct RefreshConfig: Codable {
 
 struct DesktopConfig: Codable {
   var fontSize: Int
+  var showScrollbar: Bool
 
-  init(fontSize: Int = StatsConfigStore.defaultFontSize) {
+  init(
+    fontSize: Int = StatsConfigStore.defaultFontSize,
+    showScrollbar: Bool = false
+  ) {
     self.fontSize = fontSize
+    self.showScrollbar = showScrollbar
   }
 
   enum CodingKeys: String, CodingKey {
     case fontSize = "font_size"
+    case showScrollbar = "show_scrollbar"
   }
 
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     fontSize = try container.decodeIfPresent(Int.self, forKey: .fontSize)
       ?? StatsConfigStore.defaultFontSize
+    showScrollbar = try container.decodeIfPresent(Bool.self, forKey: .showScrollbar) ?? false
   }
 }
 
@@ -119,9 +170,25 @@ final class StatsConfigStore {
     config = updated
   }
 
+  func saveSections(_ sections: SectionsConfig) throws {
+    var updated = try configForUpdate()
+    updated.sections = sections
+    try Self.validate(updated)
+    try write(updated)
+    config = updated
+  }
+
   func saveFontSize(_ fontSize: Int) throws {
     var updated = try configForUpdate()
     updated.desktop.fontSize = fontSize
+    try Self.validate(updated)
+    try write(updated)
+    config = updated
+  }
+
+  func saveShowScrollbar(_ showScrollbar: Bool) throws {
+    var updated = try configForUpdate()
+    updated.desktop.showScrollbar = showScrollbar
     try Self.validate(updated)
     try write(updated)
     config = updated
