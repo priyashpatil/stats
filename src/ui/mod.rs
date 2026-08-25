@@ -402,11 +402,11 @@ fn collect_amp_ai_rows(
         let updated = amp
             .updated_at
             .as_ref()
-            .map(|time| format!(" from {}", time.format("%-d %b, %-I:%M%P")))
-            .unwrap_or_default();
+            .map(|time| time.format("%-d %b, %-I:%M%P").to_string())
+            .unwrap_or_else(|| "unknown".into());
         statuses.push(ai_status_row(
             "Amp",
-            format!("Cached usage{updated}"),
+            format!("Last updated {updated}"),
             Color::Yellow,
         ));
     }
@@ -797,9 +797,9 @@ fn amp_once_lines(state: &ProviderState<AmpUsage>) -> Vec<String> {
         let updated = state
             .updated_at
             .as_ref()
-            .map(|time| format!(" from {}", time.format("%-d %b, %-I:%M%P")))
-            .unwrap_or_default();
-        lines.push(format!("Amp cached usage{updated}"));
+            .map(|time| time.format("%-d %b, %-I:%M%P").to_string())
+            .unwrap_or_else(|| "unknown".into());
+        lines.push(format!("Amp usage last updated {updated}"));
     }
     if let Some(percent) = usage.other_percent_remaining {
         let plan = usage.plan.as_deref().unwrap_or("Amp");
@@ -1181,7 +1181,7 @@ mod tests {
 
         let lines = amp_once_lines(&state);
 
-        assert_eq!(lines[0], "Amp cached usage");
+        assert_eq!(lines[0], "Amp usage last updated unknown");
         assert_eq!(
             lines[1],
             "Gigawatt 97.5% remaining · Other usage · resets upon renewal in 4 days"

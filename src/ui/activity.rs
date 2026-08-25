@@ -11,6 +11,7 @@ use crate::model::{
 };
 
 const ACTIVITY_MIN_GUTTER_WIDTH: usize = 5;
+const AMP_DETAIL_DAYS: u64 = 30;
 
 pub(super) fn amp_activity_history_days(dashboard_width: usize, utc_today: NaiveDate) -> usize {
     let panel_width = if dashboard_width < 50 {
@@ -68,7 +69,7 @@ pub(super) fn render_codex_activity(
         ]));
         return;
     };
-    render_activity_calendar(lines, &calendar, width);
+    render_activity_calendar(lines, &calendar, width, true);
 }
 
 pub(super) fn render_amp_activity(
@@ -111,20 +112,24 @@ pub(super) fn render_amp_activity(
     let Some(calendar) = activity_calendar(&codex_shaped, width, utc_today) else {
         return;
     };
-    render_activity_calendar(lines, &calendar, width);
+    render_activity_calendar(lines, &calendar, width, false);
     lines.push(Line::default());
-    let visible_activity = AmpActivityUsage {
+    let detail_start = calendar
+        .utc_today
+        .checked_sub_days(Days::new(AMP_DETAIL_DAYS - 1))
+        .unwrap_or(calendar.utc_today);
+    let recent_activity = AmpActivityUsage {
         daily_usage_buckets: result
             .daily_usage_buckets
             .iter()
             .filter(|bucket| {
                 NaiveDate::parse_from_str(&bucket.date, "%Y-%m-%d")
-                    .is_ok_and(|date| date >= calendar.start_week && date <= calendar.utc_today)
+                    .is_ok_and(|date| date >= detail_start && date <= calendar.utc_today)
             })
             .cloned()
             .collect(),
     };
-    lines.extend(amp_detail_rows(&visible_activity, width));
+    lines.extend(amp_detail_rows(&recent_activity, width, calendar.utc_today));
 }
 
 pub(super) fn amp_activity_sync_message(
@@ -189,6 +194,7 @@ fn render_activity_calendar(
     lines: &mut Vec<Line<'static>>,
     calendar: &ActivityCalendar,
     width: usize,
+    show_overview: bool,
 ) {
     lines.push(activity_month_labels(&calendar));
     for day_offset in 0..7 {
@@ -222,56 +228,127 @@ fn render_activity_calendar(
         lines.push(Line::from(spans));
     }
     lines.push(Line::default());
-    lines.extend(activity_overview_rows(&calendar, width));
-    lines.push(Line::default());
+    if show_overview {
+        lines.extend(activity_overview_rows(&calendar, width));
+        lines.push(Line::default());
+    }
     lines.extend(activity_daily_rows(&calendar, width));
 }
 
-fn amp_detail_rows(activity: &AmpActivityUsage, width: usize) -> Vec<Line<'static>> {
-    let covered = activity
-        .daily_usage_buckets
-        .iter()
-        .map(|bucket| bucket.covered_cost)
-        .sum::<f64>();
-    let paid = activity
-        .daily_usage_buckets
-        .iter()
-        .map(|bucket| bucket.paid_cost)
-        .sum::<f64>();
-    let orb_millis = activity
-        .daily_usage_buckets
-        .iter()
-        .map(|bucket| bucket.orb_runtime_millis)
-        .sum::<u64>();
-    let models = aggregate_categories(
-        activity
-            .daily_usage_buckets
-            .iter()
-            .flat_map(|bucket| &bucket.models),
-    );
-    let sources = aggregate_categories(
-        activity
-            .daily_usage_buckets
-            .iter()
-            .flat_map(|bucket| &bucket.sources),
-    );
-    let mut rows = [
-        ("Covered", format!("${covered:.2}")),
-        ("Paid", format!("${paid:.2}")),
-        ("Orb time", compact_duration(orb_millis)),
-    ]
-    .into_iter()
-    .filter(|(_, value)| !value.is_empty())
-    .map(|(label, value)| {
-        Line::from(vec![
-            dim(fixed(label, CODEX_GUTTER_WIDTH)),
-            dim(fixed(&value, width.saturating_sub(CODEX_GUTTER_WIDTH))),
-        ])
-    })
-    .collect::<Vec<_>>();
-    rows.extend(category_detail_rows("Models", &models, width));
-    rows.extend(category_detail_rows("Sources", &sources, width));
+#[derive(Clone, Copy)]
+enum AmpCategoryKind {
+    Models,
+    Sources,
+}
+
+impl AmpCategoryKind {
+    fn heading(self) -> &'static str {
+        match self {
+            Self::Models => "Models",
+            Self::Sources => "Sources",
+        }
+    }
+
+    fn categories(self, bucket: &crate::model::AmpDailyUsageBucket) -> &[AmpTokenCategory] {
+        match self {
+            Self::Models => &bucket.models,
+            Self::Sources => &bucket.sources,
+        }
+    }
+}
+
+fn amp_detail_rows(
+    activity: &AmpActivityUsage,
+    width: usize,
+    utc_today: NaiveDate,
+) -> Vec<Line<'static>> {
+    let periods = [1_u64, 7, AMP_DETAIL_DAYS];
+    let mut rows = vec![amp_table_row(
+        "Metric",
+        ["1D".into(), "7D".into(), "30D".into()],
+        width,
+    )];
+    rows.push(amp_table_row(
+        "Covered",
+        periods.map(|days| {
+            format!(
+                "${:.2}",
+                period_buckets(activity, utc_today, days)
+                    .map(|bucket| bucket.covered_cost)
+                    .sum::<f64>()
+            )
+        }),
+        width,
+    ));
+    rows.push(amp_table_row(
+        "Paid",
+        periods.map(|days| {
+            format!(
+                "${:.2}",
+                period_buckets(activity, utc_today, days)
+                    .map(|bucket| bucket.paid_cost)
+                    .sum::<f64>()
+            )
+        }),
+        width,
+    ));
+    rows.push(amp_table_row(
+        "Orb time",
+        periods.map(|days| {
+            compact_duration(
+                period_buckets(activity, utc_today, days)
+                    .map(|bucket| bucket.orb_runtime_millis)
+                    .sum(),
+            )
+        }),
+        width,
+    ));
+    rows.extend(category_table_rows(
+        activity,
+        AmpCategoryKind::Models,
+        width,
+        utc_today,
+    ));
+    rows.extend(category_table_rows(
+        activity,
+        AmpCategoryKind::Sources,
+        width,
+        utc_today,
+    ));
     rows
+}
+
+fn period_buckets(
+    activity: &AmpActivityUsage,
+    utc_today: NaiveDate,
+    days: u64,
+) -> impl Iterator<Item = &crate::model::AmpDailyUsageBucket> {
+    let start = utc_today
+        .checked_sub_days(Days::new(days - 1))
+        .unwrap_or(utc_today);
+    activity.daily_usage_buckets.iter().filter(move |bucket| {
+        NaiveDate::parse_from_str(&bucket.date, "%Y-%m-%d")
+            .is_ok_and(|date| date >= start && date <= utc_today)
+    })
+}
+
+fn amp_table_row(label: &str, values: [String; 3], width: usize) -> Line<'static> {
+    let minimum_label_width = CODEX_GUTTER_WIDTH.min(width);
+    let label_width = width.saturating_sub(21).clamp(minimum_label_width, 24);
+    let column_widths = equal_column_widths(width.saturating_sub(label_width), values.len());
+    let mut spans = vec![dim(fixed(label, label_width))];
+    spans.extend(
+        values
+            .into_iter()
+            .zip(column_widths)
+            .map(|(value, width)| dim(right_fixed(&value, width))),
+    );
+    Line::from(spans)
+}
+
+fn right_fixed(value: &str, width: usize) -> String {
+    let clipped = value.chars().take(width).collect::<String>();
+    format!("{clipped:>width$}")
 }
 
 fn aggregate_categories<'a>(
@@ -282,38 +359,56 @@ fn aggregate_categories<'a>(
         let total = totals.entry(category.label.clone()).or_insert(0_u64);
         *total = total.saturating_add(category.tokens);
     }
-    let mut totals = totals.into_iter().collect::<Vec<_>>();
+    let mut totals = totals
+        .into_iter()
+        .filter(|(_, tokens)| *tokens > 0)
+        .collect::<Vec<_>>();
     totals.sort_by_key(|(_, tokens)| std::cmp::Reverse(*tokens));
     totals
 }
 
-fn category_detail_rows(
-    heading: &str,
-    categories: &[(String, u64)],
+fn category_table_rows(
+    activity: &AmpActivityUsage,
+    kind: AmpCategoryKind,
     width: usize,
+    utc_today: NaiveDate,
 ) -> Vec<Line<'static>> {
+    let categories = aggregate_categories(
+        activity
+            .daily_usage_buckets
+            .iter()
+            .flat_map(|bucket| kind.categories(bucket)),
+    );
     let total = categories.iter().map(|(_, tokens)| *tokens).sum::<u64>();
     if total == 0 {
         return Vec::new();
     }
-    let value_width = width.saturating_sub(CODEX_GUTTER_WIDTH);
-    categories
-        .iter()
-        .enumerate()
-        .map(|(index, (label, tokens))| {
-            let percent = format!("{:.0}%", *tokens as f64 / total as f64 * 100.0);
-            let label_width = value_width.saturating_sub(percent.chars().count() + 1);
-            Line::from(vec![
-                dim(fixed(
-                    if index == 0 { heading } else { "" },
-                    CODEX_GUTTER_WIDTH,
-                )),
-                dim(fixed(label, label_width)),
-                dim(" "),
-                dim(percent),
-            ])
-        })
-        .collect()
+    let mut rows = vec![amp_table_row(
+        kind.heading(),
+        std::array::from_fn(|_| String::new()),
+        width,
+    )];
+    rows.extend(
+        categories
+            .iter()
+            .filter(|(_, tokens)| *tokens as f64 / total as f64 * 100.0 >= 1.0)
+            .map(|(label, _)| {
+                amp_table_row(
+                    label,
+                    [1_u64, 7, AMP_DETAIL_DAYS].map(|days| {
+                        compact_token_count(
+                            period_buckets(activity, utc_today, days)
+                                .flat_map(|bucket| kind.categories(bucket))
+                                .filter(|category| category.label == *label)
+                                .map(|category| category.tokens)
+                                .sum(),
+                        )
+                    }),
+                    width,
+                )
+            }),
+    );
+    rows
 }
 
 fn compact_duration(millis: u64) -> String {
@@ -946,6 +1041,14 @@ mod tests {
                                 label: "GPT-5.5".into(),
                                 tokens: 10_000_000,
                             },
+                            AmpTokenCategory {
+                                label: "Unused model".into(),
+                                tokens: 0,
+                            },
+                            AmpTokenCategory {
+                                label: "Rare model".into(),
+                                tokens: 1,
+                            },
                         ],
                         ..crate::model::AmpDailyUsageBucket::default()
                     },
@@ -956,6 +1059,20 @@ mod tests {
                         paid_cost: 0.50,
                         ..crate::model::AmpDailyUsageBucket::default()
                     },
+                    crate::model::AmpDailyUsageBucket {
+                        date: "2026-06-20".into(),
+                        covered_cost: 99.0,
+                        orb_runtime_millis: 86_400_000,
+                        models: vec![AmpTokenCategory {
+                            label: "Old model".into(),
+                            tokens: 100_000_000,
+                        }],
+                        sources: vec![AmpTokenCategory {
+                            label: "Old source".into(),
+                            tokens: 100_000_000,
+                        }],
+                        ..crate::model::AmpDailyUsageBucket::default()
+                    },
                 ],
             }),
             ..ProviderState::default()
@@ -964,23 +1081,54 @@ mod tests {
 
         let sync = amp_activity_sync_message(&state, 40, date("2026-08-02")).unwrap();
         render_amp_activity(&mut lines, &state, 40, date("2026-08-02"));
-        let text = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
+        let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
+        let text = rendered.join("\n");
+        let covered = rendered
+            .iter()
+            .find(|line| line.starts_with("Covered"))
+            .unwrap();
+        let orb_time = rendered
+            .iter()
+            .find(|line| line.starts_with("Orb time"))
+            .unwrap();
+        let sol = rendered
+            .iter()
+            .find(|line| line.starts_with("GPT-5.6 Sol"))
+            .unwrap();
+        let chatgpt = rendered
+            .iter()
+            .find(|line| line.starts_with("ChatGPT Pro"))
+            .unwrap();
 
-        assert_eq!(sync, "Amp Code activity history sync completes in ~4h 55m");
+        assert_eq!(sync, "Amp Code activity history sync completes in ~4h 53m");
         assert!(!text.contains("activity history sync"));
-        assert!(text.contains("300M"));
-        assert!(text.contains("Covered  $1.25"));
-        assert!(text.contains("Paid     $0.50"));
+        assert!(text.contains("Metric"));
+        assert!(text.contains("1D"));
+        assert!(text.contains("7D"));
+        assert!(text.contains("30D"));
+        assert_eq!(text.matches("7D").count(), 1);
+        assert_eq!(text.matches("30D").count(), 1);
+        assert!(covered.contains("$0.00"));
+        assert_eq!(covered.matches("$1.25").count(), 2);
+        assert!(orb_time.contains("1h0m"));
+        assert_eq!(orb_time.matches("1h1m").count(), 2);
         assert!(!text.contains('█'));
-        assert!(text.contains("1h1m"));
-        assert!(text.contains("Models   GPT-5.6 Sol"));
-        assert!(text.contains("90%"));
+        assert!(text.contains("Models"));
+        assert_eq!(sol.matches("90M").count(), 2);
+        assert!(!sol.contains('%'));
         assert!(text.contains("GPT-5.5"));
-        assert!(text.contains("10%"));
-        assert!(text.contains("Sources  ChatGPT Pro"));
-        assert!(text.contains("99%"));
+        assert_eq!(text.matches("10M").count(), 2);
+        assert!(!text.contains("Unused model"));
+        assert!(!text.contains("Rare model"));
+        assert!(!text.contains("<1%"));
+        assert!(text.contains("Sources"));
+        assert_eq!(chatgpt.matches("99M").count(), 2);
+        assert!(!chatgpt.contains('%'));
         assert!(text.contains("Amp"));
-        assert!(text.contains("1%"));
+        assert_eq!(text.matches("1M").count(), 2);
+        assert!(!text.contains("Old model"));
+        assert!(!text.contains("Old source"));
+        assert!(!text.contains("$100.25"));
     }
 
     #[test]
