@@ -273,6 +273,14 @@ fn collect_amp_ai_rows(
             suffix: None,
         });
     }
+    if let Some(percent_left) = result.orb_percent_remaining {
+        rows.push(AiQuotaRow {
+            label: "Amp Orbs".into(),
+            percent_left,
+            reset: result.reset.as_deref().map(amp_compact_reset_label),
+            suffix: result.orb_runtime.clone(),
+        });
+    }
 }
 
 fn amp_compact_reset_label(reset: &str) -> String {
@@ -617,6 +625,16 @@ pub(crate) fn print_once(state: &Arc<Mutex<AppState>>) {
             percent
         );
     }
+    if let Some(amp) = &state.amp.result
+        && let Some(percent) = amp.orb_percent_remaining
+    {
+        let runtime = amp
+            .orb_runtime
+            .as_deref()
+            .map(|runtime| format!(" · {runtime}"))
+            .unwrap_or_default();
+        println!("Amp Orbs {:.0}% left{runtime}", percent);
+    }
     if let Some(error) = &state.codex.error {
         println!("Codex error: {error}");
     } else if let Some(result) = &state.codex.result {
@@ -867,6 +885,8 @@ mod tests {
             result: Some(AmpUsage {
                 plan: Some("Megawatt".into()),
                 other_percent_remaining: Some(82.0),
+                orb_percent_remaining: Some(64.5),
+                orb_runtime: Some("1h20m12.210s".into()),
                 reset: Some("resets upon renewal in 1 month".into()),
             }),
             ..ProviderState::default()
@@ -891,7 +911,7 @@ mod tests {
         };
         let mut lines = Vec::new();
 
-        render_ai_at(&mut lines, &amp, &codex, &activity, 40, date("2026-08-02"));
+        render_ai_at(&mut lines, &amp, &codex, &activity, 58, date("2026-08-02"));
         let text = lines.iter().map(line_text).collect::<Vec<_>>();
         let megawatt = text
             .iter()
@@ -901,9 +921,16 @@ mod tests {
             .iter()
             .position(|line| line.contains("Codex Pro"))
             .unwrap();
+        let orbs = text
+            .iter()
+            .position(|line| line.contains("Amp Orbs"))
+            .unwrap();
 
         assert!(text[0].starts_with("AI"));
-        assert!(megawatt < quota);
+        assert!(megawatt < orbs);
+        assert!(orbs < quota);
+        assert!(text[orbs].contains("65% left"));
+        assert!(text[orbs].contains("1h20m12.210s"));
         assert!(text[quota + 1].is_empty());
         assert!(text[quota + 2].contains("Jul"));
         assert!(text[quota + 3].starts_with("Sun"));

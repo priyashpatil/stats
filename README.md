@@ -9,7 +9,7 @@ Stats is a lightweight dashboard for your Mac's system health, Amp usage, and Co
 ## What it shows
 
 - CPU, RAM, GPU, storage, and network metrics
-- Amp subscription usage
+- Amp subscription and Orb usage
 - Codex weekly quota and token activity
 - Four customizable world clocks
 

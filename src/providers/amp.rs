@@ -36,17 +36,26 @@ pub(crate) fn spawn_refresh_amp(
 }
 
 fn read_amp_usage() -> Result<AmpUsage, String> {
-    let output = run_output("amp", &["usage", "--no-color"], Duration::from_secs(12))?;
+    let output = run_output(
+        "amp",
+        &["usage", "--no-color", "--details"],
+        Duration::from_secs(12),
+    )?;
     extract_amp_usage(&output).ok_or_else(|| "could not read Amp usage".into())
 }
 
 fn extract_amp_usage(output: &str) -> Option<AmpUsage> {
     let cleaned = strip_ansi(output).replace("**", "");
     let subscription = Regex::new(
-        r"(?i)(?:Amp\s+([^:\r\n]+?)\s+Subscription|Subscription\s+([^:\r\n]+)):\s*([0-9]+(?:\.[0-9]+)?)%\s+other usage and\s+[0-9]+(?:\.[0-9]+)?%\s+orb usage remaining(?:\s+-\s+([^\r\n]+))?",
+        r"(?i)(?:Amp\s+([^:\r\n]+?)\s+Subscription|Subscription\s+([^:\r\n]+)):\s*([0-9]+(?:\.[0-9]+)?)%\s+other usage and\s+([0-9]+(?:\.[0-9]+)?)%\s+orb usage remaining(?:\s+-\s+([^\r\n]+))?",
     )
     .ok()?
     .captures(&cleaned)?;
+    let orb_runtime = Regex::new(r"(?im)^Total Orb runtime:\s*([^\r\n(]+)")
+        .ok()?
+        .captures(&cleaned)
+        .and_then(|captures| captures.get(1))
+        .map(|value| value.as_str().trim().to_string());
     Some(AmpUsage {
         plan: subscription
             .get(1)
@@ -55,8 +64,12 @@ fn extract_amp_usage(output: &str) -> Option<AmpUsage> {
         other_percent_remaining: subscription
             .get(3)
             .and_then(|value| value.as_str().parse().ok()),
-        reset: subscription
+        orb_percent_remaining: subscription
             .get(4)
+            .and_then(|value| value.as_str().parse().ok()),
+        orb_runtime,
+        reset: subscription
+            .get(5)
             .map(|value| value.as_str().trim().to_string()),
     })
 }
@@ -74,10 +87,12 @@ mod tests {
 
     #[test]
     fn extracts_current_amp_megawatt_usage() {
-        let output = "Signed in as user@example.com\n**Amp Megawatt Subscription:** 82% other usage and 64.5% orb usage remaining - resets upon renewal in 1 month\n**Individual credits:** $1.01 remaining\n";
+        let output = "Signed in as user@example.com\n**Amp Megawatt Subscription:** 82% other usage and 64.5% orb usage remaining - resets upon renewal in 1 month\n**Individual credits:** $1.01 remaining\n\nRange: 2026-08-18T05:45:24.249Z to 2026-08-25T05:45:24.249Z (end exclusive)\nTotal Orb runtime: 1h20m12.210s (4,812,210 ms)\n";
         let usage = extract_amp_usage(output).expect("usage");
         assert_eq!(usage.plan.as_deref(), Some("Megawatt"));
         assert_eq!(usage.other_percent_remaining, Some(82.0));
+        assert_eq!(usage.orb_percent_remaining, Some(64.5));
+        assert_eq!(usage.orb_runtime.as_deref(), Some("1h20m12.210s"));
         assert_eq!(
             usage.reset.as_deref(),
             Some("resets upon renewal in 1 month")
@@ -89,6 +104,8 @@ mod tests {
         let usage = extract_amp_usage("Subscription Megawatt: 82% other usage and 64.5% orb usage remaining - resets upon renewal in 1 month\n").expect("usage");
         assert_eq!(usage.plan.as_deref(), Some("Megawatt"));
         assert_eq!(usage.other_percent_remaining, Some(82.0));
+        assert_eq!(usage.orb_percent_remaining, Some(64.5));
+        assert_eq!(usage.orb_runtime, None);
     }
 
     #[test]
@@ -99,6 +116,7 @@ mod tests {
         .expect("usage");
         assert_eq!(usage.plan.as_deref(), Some("Gigawatt"));
         assert_eq!(usage.other_percent_remaining, Some(97.5));
+        assert_eq!(usage.orb_percent_remaining, Some(100.0));
         assert_eq!(
             usage.reset.as_deref(),
             Some("resets upon renewal in 29 days")
@@ -113,6 +131,7 @@ mod tests {
         .expect("usage");
         assert_eq!(usage.plan.as_deref(), Some("Megawatt"));
         assert_eq!(usage.other_percent_remaining, Some(82.0));
+        assert_eq!(usage.orb_percent_remaining, Some(64.5));
         assert_eq!(usage.reset, None);
     }
 }

@@ -47,6 +47,8 @@ pub(crate) struct ProviderState<T> {
 pub(crate) struct AmpUsage {
     pub(crate) plan: Option<String>,
     pub(crate) other_percent_remaining: Option<f64>,
+    pub(crate) orb_percent_remaining: Option<f64>,
+    pub(crate) orb_runtime: Option<String>,
     pub(crate) reset: Option<String>,
 }
 
