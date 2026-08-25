@@ -5,9 +5,24 @@ use ratatui::style::Color;
 use ratatui::text::{Line, Span};
 
 use super::{CODEX_GUTTER_WIDTH, ai_status_row, dim, equal_column_widths, fixed, span};
-use crate::model::{CodexActivitySummary, CodexActivityUsage, DailyTokenUsage, ProviderState};
+use crate::model::{
+    AmpActivityUsage, AmpTokenCategory, CodexActivitySummary, CodexActivityUsage,
+    CodexDailyUsageBucket, DailyTokenUsage, ProviderState,
+};
 
 const ACTIVITY_MIN_GUTTER_WIDTH: usize = 5;
+
+pub(super) fn amp_activity_history_days(dashboard_width: usize, utc_today: NaiveDate) -> usize {
+    let panel_width = if dashboard_width < 50 {
+        dashboard_width
+    } else {
+        (dashboard_width - 2).div_ceil(2)
+    };
+    activity_week_capacity(panel_width)
+        .saturating_sub(1)
+        .saturating_mul(7)
+        .saturating_add(utc_today.weekday().num_days_from_sunday() as usize + 1)
+}
 
 #[derive(Debug, Clone)]
 struct ActivityCalendar {
@@ -53,7 +68,128 @@ pub(super) fn render_codex_activity(
         ]));
         return;
     };
+    render_activity_calendar(lines, &calendar, width);
+}
 
+pub(super) fn render_amp_activity(
+    lines: &mut Vec<Line<'static>>,
+    activity: &ProviderState<AmpActivityUsage>,
+    width: usize,
+    utc_today: NaiveDate,
+) {
+    if activity_week_capacity(width) == 0 {
+        return;
+    }
+    if let Some(error) = &activity.error {
+        lines.push(ai_status_row(
+            "Activity",
+            format!("Cached data; refresh failed: {error}"),
+            Color::Yellow,
+        ));
+    }
+    let Some(result) = &activity.result else {
+        lines.push(ai_status_row(
+            "Activity",
+            "Loading Amp history...",
+            Color::Yellow,
+        ));
+        return;
+    };
+    let codex_shaped = CodexActivityUsage {
+        daily_usage_buckets: Some(
+            result
+                .daily_usage_buckets
+                .iter()
+                .map(|bucket| CodexDailyUsageBucket {
+                    start_date: bucket.date.clone(),
+                    tokens: bucket.tokens,
+                })
+                .collect(),
+        ),
+        summary: None,
+    };
+    let Some(calendar) = activity_calendar(&codex_shaped, width, utc_today) else {
+        return;
+    };
+    render_activity_calendar(lines, &calendar, width);
+    lines.push(Line::default());
+    let visible_activity = AmpActivityUsage {
+        daily_usage_buckets: result
+            .daily_usage_buckets
+            .iter()
+            .filter(|bucket| {
+                NaiveDate::parse_from_str(&bucket.date, "%Y-%m-%d")
+                    .is_ok_and(|date| date >= calendar.start_week && date <= calendar.utc_today)
+            })
+            .cloned()
+            .collect(),
+    };
+    lines.extend(amp_detail_rows(&visible_activity, width));
+}
+
+pub(super) fn amp_activity_sync_message(
+    activity: &ProviderState<AmpActivityUsage>,
+    width: usize,
+    utc_today: NaiveDate,
+) -> Option<String> {
+    let result = activity.result.as_ref()?;
+    if activity.error.is_some() {
+        return None;
+    }
+    let codex_shaped = CodexActivityUsage {
+        daily_usage_buckets: Some(
+            result
+                .daily_usage_buckets
+                .iter()
+                .map(|bucket| CodexDailyUsageBucket {
+                    start_date: bucket.date.clone(),
+                    tokens: bucket.tokens,
+                })
+                .collect(),
+        ),
+        summary: None,
+    };
+    let calendar = activity_calendar(&codex_shaped, width, utc_today)?;
+    let required_days = utc_today
+        .signed_duration_since(calendar.start_week)
+        .num_days()
+        .max(0) as usize
+        + 1;
+    let cached_days = result
+        .daily_usage_buckets
+        .iter()
+        .filter(|bucket| {
+            NaiveDate::parse_from_str(&bucket.date, "%Y-%m-%d")
+                .is_ok_and(|date| date >= calendar.start_week && date <= utc_today)
+        })
+        .count();
+    if cached_days >= required_days {
+        return None;
+    }
+    let remaining_days = required_days - cached_days;
+    let retry_seconds = activity
+        .retry_after
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    let eta_seconds = (remaining_days as u64)
+        .saturating_mul(3_600)
+        .div_ceil(24)
+        .saturating_add(retry_seconds);
+    let resume = activity
+        .retry_after
+        .map(|duration| format!(" · resumes in ~{}", sync_eta(duration.as_secs())))
+        .unwrap_or_default();
+    Some(format!(
+        "Amp Code activity history sync completes in ~{}{resume}",
+        sync_eta(eta_seconds)
+    ))
+}
+
+fn render_activity_calendar(
+    lines: &mut Vec<Line<'static>>,
+    calendar: &ActivityCalendar,
+    width: usize,
+) {
     lines.push(activity_month_labels(&calendar));
     for day_offset in 0..7 {
         let mut spans = vec![dim(fixed(
@@ -89,6 +225,119 @@ pub(super) fn render_codex_activity(
     lines.extend(activity_overview_rows(&calendar, width));
     lines.push(Line::default());
     lines.extend(activity_daily_rows(&calendar, width));
+}
+
+fn amp_detail_rows(activity: &AmpActivityUsage, width: usize) -> Vec<Line<'static>> {
+    let covered = activity
+        .daily_usage_buckets
+        .iter()
+        .map(|bucket| bucket.covered_cost)
+        .sum::<f64>();
+    let paid = activity
+        .daily_usage_buckets
+        .iter()
+        .map(|bucket| bucket.paid_cost)
+        .sum::<f64>();
+    let orb_millis = activity
+        .daily_usage_buckets
+        .iter()
+        .map(|bucket| bucket.orb_runtime_millis)
+        .sum::<u64>();
+    let models = aggregate_categories(
+        activity
+            .daily_usage_buckets
+            .iter()
+            .flat_map(|bucket| &bucket.models),
+    );
+    let sources = aggregate_categories(
+        activity
+            .daily_usage_buckets
+            .iter()
+            .flat_map(|bucket| &bucket.sources),
+    );
+    let mut rows = [
+        ("Covered", format!("${covered:.2}")),
+        ("Paid", format!("${paid:.2}")),
+        ("Orb time", compact_duration(orb_millis)),
+    ]
+    .into_iter()
+    .filter(|(_, value)| !value.is_empty())
+    .map(|(label, value)| {
+        Line::from(vec![
+            dim(fixed(label, CODEX_GUTTER_WIDTH)),
+            dim(fixed(&value, width.saturating_sub(CODEX_GUTTER_WIDTH))),
+        ])
+    })
+    .collect::<Vec<_>>();
+    rows.extend(category_detail_rows("Models", &models, width));
+    rows.extend(category_detail_rows("Sources", &sources, width));
+    rows
+}
+
+fn aggregate_categories<'a>(
+    categories: impl Iterator<Item = &'a AmpTokenCategory>,
+) -> Vec<(String, u64)> {
+    let mut totals = BTreeMap::new();
+    for category in categories {
+        let total = totals.entry(category.label.clone()).or_insert(0_u64);
+        *total = total.saturating_add(category.tokens);
+    }
+    let mut totals = totals.into_iter().collect::<Vec<_>>();
+    totals.sort_by_key(|(_, tokens)| std::cmp::Reverse(*tokens));
+    totals
+}
+
+fn category_detail_rows(
+    heading: &str,
+    categories: &[(String, u64)],
+    width: usize,
+) -> Vec<Line<'static>> {
+    let total = categories.iter().map(|(_, tokens)| *tokens).sum::<u64>();
+    if total == 0 {
+        return Vec::new();
+    }
+    let value_width = width.saturating_sub(CODEX_GUTTER_WIDTH);
+    categories
+        .iter()
+        .enumerate()
+        .map(|(index, (label, tokens))| {
+            let percent = format!("{:.0}%", *tokens as f64 / total as f64 * 100.0);
+            let label_width = value_width.saturating_sub(percent.chars().count() + 1);
+            Line::from(vec![
+                dim(fixed(
+                    if index == 0 { heading } else { "" },
+                    CODEX_GUTTER_WIDTH,
+                )),
+                dim(fixed(label, label_width)),
+                dim(" "),
+                dim(percent),
+            ])
+        })
+        .collect()
+}
+
+fn compact_duration(millis: u64) -> String {
+    let minutes = millis / 60_000;
+    let hours = minutes / 60;
+    if hours > 0 {
+        format!("{hours}h{}m", minutes % 60)
+    } else {
+        format!("{minutes}m")
+    }
+}
+
+fn sync_eta(seconds: u64) -> String {
+    let minutes = seconds.div_ceil(60);
+    if minutes < 60 {
+        return format!("{minutes}m");
+    }
+    let hours = minutes / 60;
+    let remaining_minutes = minutes % 60;
+    if remaining_minutes == 0 {
+        format!("{hours}h")
+    } else {
+        format!("{hours}h {remaining_minutes}m")
+    }
 }
 
 fn activity_overview_rows(calendar: &ActivityCalendar, width: usize) -> Vec<Line<'static>> {
@@ -666,5 +915,113 @@ mod tests {
                 .all(|span| span.style.add_modifier.contains(Modifier::DIM))
         );
         assert!(activity_daily_rows(&empty_calendar, 6).is_empty());
+    }
+
+    #[test]
+    fn renders_cached_amp_activity_and_aggregate_details() {
+        let state = ProviderState {
+            result: Some(AmpActivityUsage {
+                daily_usage_buckets: vec![
+                    crate::model::AmpDailyUsageBucket {
+                        date: "2026-08-01".into(),
+                        tokens: 100_000_000,
+                        orb_runtime_millis: 60_000,
+                        covered_cost: 1.25,
+                        sources: vec![
+                            AmpTokenCategory {
+                                label: "ChatGPT Pro".into(),
+                                tokens: 99_000_000,
+                            },
+                            AmpTokenCategory {
+                                label: "Amp".into(),
+                                tokens: 1_000_000,
+                            },
+                        ],
+                        models: vec![
+                            AmpTokenCategory {
+                                label: "GPT-5.6 Sol".into(),
+                                tokens: 90_000_000,
+                            },
+                            AmpTokenCategory {
+                                label: "GPT-5.5".into(),
+                                tokens: 10_000_000,
+                            },
+                        ],
+                        ..crate::model::AmpDailyUsageBucket::default()
+                    },
+                    crate::model::AmpDailyUsageBucket {
+                        date: "2026-08-02".into(),
+                        tokens: 200_000_000,
+                        orb_runtime_millis: 3_600_000,
+                        paid_cost: 0.50,
+                        ..crate::model::AmpDailyUsageBucket::default()
+                    },
+                ],
+            }),
+            ..ProviderState::default()
+        };
+        let mut lines = Vec::new();
+
+        let sync = amp_activity_sync_message(&state, 40, date("2026-08-02")).unwrap();
+        render_amp_activity(&mut lines, &state, 40, date("2026-08-02"));
+        let text = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
+
+        assert_eq!(sync, "Amp Code activity history sync completes in ~4h 55m");
+        assert!(!text.contains("activity history sync"));
+        assert!(text.contains("300M"));
+        assert!(text.contains("Covered  $1.25"));
+        assert!(text.contains("Paid     $0.50"));
+        assert!(!text.contains('█'));
+        assert!(text.contains("1h1m"));
+        assert!(text.contains("Models   GPT-5.6 Sol"));
+        assert!(text.contains("90%"));
+        assert!(text.contains("GPT-5.5"));
+        assert!(text.contains("10%"));
+        assert!(text.contains("Sources  ChatGPT Pro"));
+        assert!(text.contains("99%"));
+        assert!(text.contains("Amp"));
+        assert!(text.contains("1%"));
+    }
+
+    #[test]
+    fn combines_the_budget_pause_with_the_overall_sync_eta() {
+        let state = ProviderState {
+            result: Some(AmpActivityUsage {
+                daily_usage_buckets: vec![crate::model::AmpDailyUsageBucket {
+                    date: "2026-08-02".into(),
+                    tokens: 1,
+                    ..crate::model::AmpDailyUsageBucket::default()
+                }],
+            }),
+            retry_after: Some(std::time::Duration::from_secs(40 * 60)),
+            ..ProviderState::default()
+        };
+
+        let message = amp_activity_sync_message(&state, 40, date("2026-08-02")).unwrap();
+
+        assert_eq!(
+            message,
+            "Amp Code activity history sync completes in ~5h 38m · resumes in ~40m"
+        );
+    }
+
+    #[test]
+    fn amp_activity_history_matches_the_full_visible_grid() {
+        let today = date("2026-08-02");
+        assert_eq!(amp_activity_history_days(40, today), 120);
+        assert_eq!(amp_activity_history_days(58, today), 78);
+
+        let usage = CodexActivityUsage {
+            daily_usage_buckets: Some(vec![CodexDailyUsageBucket {
+                start_date: "2026-08-02".into(),
+                tokens: 1,
+            }]),
+            summary: None,
+        };
+        let calendar = activity_calendar(&usage, 40, today).unwrap();
+        assert_eq!(
+            today.signed_duration_since(calendar.start_week).num_days() as usize + 1,
+            amp_activity_history_days(40, today)
+        );
     }
 }

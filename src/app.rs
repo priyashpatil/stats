@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use crate::cache::prime_usage_caches;
 use crate::cli::{command_exists, parse_args};
 use crate::model::{Action, AppState, Args, Mode};
-use crate::providers::amp::spawn_refresh_amp;
+use crate::providers::amp::{spawn_refresh_amp, spawn_refresh_amp_activity};
 use crate::providers::codex::{
     pick_port, run_codex_usage_status, shutdown_server, spawn_codex_client, start_codex_server,
     wait_ready,
@@ -56,6 +56,7 @@ fn run_stats(args: Args) -> Result<(), String> {
 
         spawn_refresh_system(&state, &stop, args.storage_interval);
         spawn_refresh_amp(&state, &stop, args.amp_interval);
+        spawn_refresh_amp_activity(&state, &stop, args.amp_interval);
         spawn_codex_client(&state, &stop, port, args.interval);
 
         if args.once {

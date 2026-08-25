@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Local, NaiveDate};
 use serde::{Deserialize, Serialize};
@@ -38,8 +38,10 @@ pub(crate) enum Mode {
 pub(crate) struct ProviderState<T> {
     pub(crate) result: Option<T>,
     pub(crate) error: Option<String>,
+    pub(crate) retry_after: Option<Duration>,
     pub(crate) updated_at: Option<DateTime<Local>>,
     pub(crate) ready: bool,
+    pub(crate) stale: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -49,7 +51,47 @@ pub(crate) struct AmpUsage {
     pub(crate) other_percent_remaining: Option<f64>,
     pub(crate) orb_percent_remaining: Option<f64>,
     pub(crate) orb_runtime: Option<String>,
+    pub(crate) individual_credits_remaining: Option<String>,
     pub(crate) reset: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct AmpActivityUsage {
+    pub(crate) daily_usage_buckets: Vec<AmpDailyUsageBucket>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct AmpDailyUsageBucket {
+    pub(crate) date: String,
+    pub(crate) tokens: u64,
+    pub(crate) orb_runtime_millis: u64,
+    pub(crate) covered_cost: f64,
+    pub(crate) paid_cost: f64,
+    pub(crate) sources: Vec<AmpTokenCategory>,
+    pub(crate) models: Vec<AmpTokenCategory>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct AmpTokenCategory {
+    pub(crate) label: String,
+    pub(crate) tokens: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct AmpRequestLedger {
+    pub(crate) requests: Vec<AmpRequestRecord>,
+    pub(crate) blocked_until: Option<f64>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct AmpRequestRecord {
+    pub(crate) requested_at: f64,
+    pub(crate) kind: String,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -122,6 +164,8 @@ impl Default for SystemMetrics {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct AppState {
     pub(crate) amp: ProviderState<AmpUsage>,
+    pub(crate) amp_activity: ProviderState<AmpActivityUsage>,
+    pub(crate) amp_activity_history_days: usize,
     pub(crate) codex: ProviderState<Value>,
     pub(crate) codex_activity: ProviderState<CodexActivityUsage>,
     pub(crate) system: SystemMetrics,

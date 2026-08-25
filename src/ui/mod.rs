@@ -40,11 +40,16 @@ fn equal_column_widths(width: usize, count: usize) -> Vec<usize> {
         .collect()
 }
 
-use crate::model::{AmpUsage, AppState, Clock, CodexActivityUsage, ProviderState, SystemMetrics};
+use crate::model::{
+    AmpActivityUsage, AmpUsage, AppState, Clock, CodexActivityUsage, ProviderState, SystemMetrics,
+};
 use crate::providers::codex::{codex_weekly_window, left_percent, ordered_buckets};
 
 mod activity;
-use activity::render_codex_activity;
+use activity::{
+    amp_activity_history_days, amp_activity_sync_message, render_amp_activity,
+    render_codex_activity,
+};
 
 pub(crate) fn run_tui(
     state: &Arc<Mutex<AppState>>,
@@ -97,7 +102,12 @@ pub(crate) fn run_tui(
 
 fn draw(frame: &mut Frame, state: &Arc<Mutex<AppState>>, clocks: &[Clock]) {
     let area = frame.area();
-    let snapshot = state.lock().unwrap().clone();
+    let snapshot = {
+        let mut state = state.lock().unwrap();
+        state.amp_activity_history_days =
+            amp_activity_history_days(area.width as usize, Utc::now().date_naive());
+        state.clone()
+    };
     let lines = stats_lines(&snapshot, clocks, area.width as usize);
     let paragraph = Paragraph::new(Text::from(lines));
     frame.render_widget(paragraph, area);
@@ -105,11 +115,13 @@ fn draw(frame: &mut Frame, state: &Arc<Mutex<AppState>>, clocks: &[Clock]) {
 
 fn stats_lines(state: &AppState, clocks: &[Clock], width: usize) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
+    render_alerts(&mut lines, state, width, Utc::now().date_naive());
     render_clocks(&mut lines, clocks, width);
     render_system(&mut lines, &state.system, width);
     render_ai(
         &mut lines,
         &state.amp,
+        &state.amp_activity,
         &state.codex,
         &state.codex_activity,
         width,
@@ -117,13 +129,40 @@ fn stats_lines(state: &AppState, clocks: &[Clock], width: usize) -> Vec<Line<'st
     lines
 }
 
+fn render_alerts(lines: &mut Vec<Line<'static>>, state: &AppState, width: usize, today: NaiveDate) {
+    const ACTIVITY_GAP: usize = 2;
+    let activity_width = if width < 50 {
+        width
+    } else {
+        equal_column_widths(width - ACTIVITY_GAP, 2)[0]
+    };
+    let alerts = amp_activity_sync_message(&state.amp_activity, activity_width, today)
+        .map(|message| (message, Color::Yellow))
+        .into_iter()
+        .collect::<Vec<_>>();
+    if alerts.is_empty() {
+        return;
+    }
+    section(lines, "Alerts", "", width);
+    lines.push(Line::default());
+    for (message, color) in alerts {
+        lines.extend(wrapped_alert_rows(&message, color, width));
+    }
+    lines.push(Line::default());
+}
+
 fn render_clocks(lines: &mut Vec<Line<'static>>, clocks: &[Clock], width: usize) {
+    if clocks.is_empty() {
+        return;
+    }
     let gap = if width >= 72 { 4 } else { 2 };
     let card_widths =
         equal_column_widths(width.saturating_sub(gap * (clocks.len() - 1)), clocks.len());
     if card_widths.contains(&0) {
         return;
     }
+    section(lines, "Clocks", "", width);
+    lines.push(Line::default());
     let mut city_spans = Vec::new();
     let mut time_spans = Vec::new();
     let now = Local::now();
@@ -201,6 +240,7 @@ fn render_system(lines: &mut Vec<Line<'static>>, system: &SystemMetrics, width: 
 fn render_ai(
     lines: &mut Vec<Line<'static>>,
     amp: &ProviderState<AmpUsage>,
+    amp_activity: &ProviderState<AmpActivityUsage>,
     codex: &ProviderState<Value>,
     codex_activity: &ProviderState<CodexActivityUsage>,
     width: usize,
@@ -208,6 +248,7 @@ fn render_ai(
     render_ai_at(
         lines,
         amp,
+        amp_activity,
         codex,
         codex_activity,
         width,
@@ -218,6 +259,7 @@ fn render_ai(
 fn render_ai_at(
     lines: &mut Vec<Line<'static>>,
     amp: &ProviderState<AmpUsage>,
+    amp_activity: &ProviderState<AmpActivityUsage>,
     codex: &ProviderState<Value>,
     codex_activity: &ProviderState<CodexActivityUsage>,
     width: usize,
@@ -228,7 +270,8 @@ fn render_ai_at(
 
     let mut rows = Vec::new();
     let mut statuses = Vec::new();
-    collect_amp_ai_rows(&mut rows, &mut statuses, amp);
+    let mut details = Vec::new();
+    collect_amp_ai_rows(&mut rows, &mut statuses, &mut details, amp);
     collect_codex_ai_rows(&mut rows, &mut statuses, codex);
 
     for status in statuses {
@@ -238,39 +281,141 @@ fn render_ai_at(
     if !rows.is_empty() {
         render_ai_quota_rows(lines, rows, width);
     }
+    lines.extend(details);
     lines.push(Line::default());
-    render_codex_activity(lines, codex_activity, width, today);
+    render_activity_sections(lines, amp_activity, codex_activity, width, today);
 
     lines.push(Line::default());
+}
+
+fn render_activity_sections(
+    lines: &mut Vec<Line<'static>>,
+    amp: &ProviderState<AmpActivityUsage>,
+    codex: &ProviderState<CodexActivityUsage>,
+    width: usize,
+    today: NaiveDate,
+) {
+    const GAP: usize = 2;
+    if width < 50 {
+        section(lines, "Amp Activity", "", width);
+        lines.push(Line::default());
+        render_amp_activity(lines, amp, width, today);
+        lines.push(Line::default());
+        section(lines, "Codex Activity", "", width);
+        lines.push(Line::default());
+        render_codex_activity(lines, codex, width, today);
+        return;
+    }
+
+    let widths = equal_column_widths(width - GAP, 2);
+    let mut amp_heading = Vec::new();
+    section(&mut amp_heading, "Amp Activity", "", widths[0]);
+    let mut codex_heading = Vec::new();
+    section(&mut codex_heading, "Codex Activity", "", widths[1]);
+    let mut heading = clipped_line_spans(&amp_heading[0], widths[0]);
+    let used = heading
+        .iter()
+        .map(|span| span.content.chars().count())
+        .sum::<usize>();
+    heading.push(Span::raw(" ".repeat(widths[0].saturating_sub(used) + GAP)));
+    heading.extend(clipped_line_spans(&codex_heading[0], widths[1]));
+    lines.push(Line::from(heading));
+    lines.push(Line::default());
+
+    let mut amp_lines = Vec::new();
+    render_amp_activity(&mut amp_lines, amp, widths[0], today);
+    let mut codex_lines = Vec::new();
+    render_codex_activity(&mut codex_lines, codex, widths[1], today);
+
+    for index in 0..amp_lines.len().max(codex_lines.len()) {
+        let mut spans = amp_lines
+            .get(index)
+            .map(|line| clipped_line_spans(line, widths[0]))
+            .unwrap_or_default();
+        let used = spans
+            .iter()
+            .map(|span| span.content.chars().count())
+            .sum::<usize>();
+        spans.push(Span::raw(" ".repeat(widths[0].saturating_sub(used) + GAP)));
+        if let Some(line) = codex_lines.get(index) {
+            spans.extend(clipped_line_spans(line, widths[1]));
+        }
+        lines.push(Line::from(spans));
+    }
+}
+
+fn wrapped_alert_rows(message: &str, color: Color, width: usize) -> Vec<Line<'static>> {
+    let content_width = width.max(1);
+    let mut wrapped = Vec::new();
+    let mut current = String::new();
+    for word in message.split_whitespace() {
+        let next_len =
+            current.chars().count() + usize::from(!current.is_empty()) + word.chars().count();
+        if !current.is_empty() && next_len > content_width {
+            wrapped.push(current);
+            current = String::new();
+        }
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(word);
+    }
+    if !current.is_empty() {
+        wrapped.push(current);
+    }
+    wrapped
+        .into_iter()
+        .map(|content| Line::from(span(content, color, true)))
+        .collect()
+}
+
+fn clipped_line_spans(line: &Line<'_>, width: usize) -> Vec<Span<'static>> {
+    let mut remaining = width;
+    line.spans
+        .iter()
+        .filter_map(|span| {
+            if remaining == 0 {
+                return None;
+            }
+            let content = span.content.chars().take(remaining).collect::<String>();
+            remaining = remaining.saturating_sub(content.chars().count());
+            Some(Span::styled(content, span.style))
+        })
+        .collect()
 }
 
 fn collect_amp_ai_rows(
     rows: &mut Vec<AiQuotaRow>,
     statuses: &mut Vec<Line<'static>>,
+    details: &mut Vec<Line<'static>>,
     amp: &ProviderState<AmpUsage>,
 ) {
     if let Some(error) = &amp.error {
-        statuses.push(ai_status_row(
-            "Megawatt",
-            format!("Error: {error}"),
-            Color::Red,
-        ));
+        statuses.push(ai_status_row("Amp", format!("Error: {error}"), Color::Red));
         return;
     }
     let Some(result) = &amp.result else {
-        statuses.push(ai_status_row(
-            "Megawatt",
-            "Loading Amp usage...",
-            Color::Yellow,
-        ));
+        statuses.push(ai_status_row("Amp", "Loading Amp usage...", Color::Yellow));
         return;
     };
+    if amp.stale {
+        let updated = amp
+            .updated_at
+            .as_ref()
+            .map(|time| format!(" from {}", time.format("%-d %b, %-I:%M%P")))
+            .unwrap_or_default();
+        statuses.push(ai_status_row(
+            "Amp",
+            format!("Cached usage{updated}"),
+            Color::Yellow,
+        ));
+    }
     if let Some(percent_left) = result.other_percent_remaining {
         rows.push(AiQuotaRow {
-            label: result.plan.clone().unwrap_or_else(|| "Megawatt".into()),
+            label: result.plan.clone().unwrap_or_else(|| "Amp".into()),
             percent_left,
             reset: result.reset.as_deref().map(amp_compact_reset_label),
-            suffix: None,
+            suffix: Some("Other usage".into()),
         });
     }
     if let Some(percent_left) = result.orb_percent_remaining {
@@ -280,6 +425,13 @@ fn collect_amp_ai_rows(
             reset: result.reset.as_deref().map(amp_compact_reset_label),
             suffix: result.orb_runtime.clone(),
         });
+    }
+    if let Some(credits) = &result.individual_credits_remaining {
+        details.push(ai_status_row(
+            "Credits",
+            format!("{credits} remaining"),
+            Color::Green,
+        ));
     }
 }
 
@@ -425,7 +577,7 @@ fn ai_status_row(label: &str, message: impl Into<String>, color: Color) -> Line<
     ])
 }
 
-fn section(lines: &mut Vec<Line<'static>>, title: &str, meta: &str, width: usize) {
+pub(super) fn section(lines: &mut Vec<Line<'static>>, title: &str, meta: &str, width: usize) {
     let heading = title.to_uppercase();
     let mut spans = vec![span(heading.clone(), Color::Cyan, true)];
     let mut used = heading.len();
@@ -608,32 +760,8 @@ pub(crate) fn print_once(state: &Arc<Mutex<AppState>>) {
         rate_label(state.system.net_up_rate)
     );
     println!("Storage {:.0}% free", state.system.storage_percent_free);
-    if let Some(error) = &state.amp.error {
-        println!("Amp error: {error}");
-    } else if let Some(amp) = &state.amp.result
-        && let Some(percent) = amp.other_percent_remaining
-    {
-        let reset = amp
-            .reset
-            .as_deref()
-            .map(amp_compact_reset_label)
-            .map(|reset| format!(" {reset}"))
-            .unwrap_or_default();
-        println!(
-            "{} {:.0}% left{reset}",
-            amp.plan.as_deref().unwrap_or("Megawatt"),
-            percent
-        );
-    }
-    if let Some(amp) = &state.amp.result
-        && let Some(percent) = amp.orb_percent_remaining
-    {
-        let runtime = amp
-            .orb_runtime
-            .as_deref()
-            .map(|runtime| format!(" · {runtime}"))
-            .unwrap_or_default();
-        println!("Amp Orbs {:.0}% left{runtime}", percent);
+    for line in amp_once_lines(&state.amp) {
+        println!("{line}");
     }
     if let Some(error) = &state.codex.error {
         println!("Codex error: {error}");
@@ -655,6 +783,45 @@ pub(crate) fn print_once(state: &Arc<Mutex<AppState>>) {
             }
         }
     }
+}
+
+fn amp_once_lines(state: &ProviderState<AmpUsage>) -> Vec<String> {
+    if let Some(error) = &state.error {
+        return vec![format!("Amp error: {error}")];
+    }
+    let Some(usage) = &state.result else {
+        return Vec::new();
+    };
+    let mut lines = Vec::new();
+    if state.stale {
+        let updated = state
+            .updated_at
+            .as_ref()
+            .map(|time| format!(" from {}", time.format("%-d %b, %-I:%M%P")))
+            .unwrap_or_default();
+        lines.push(format!("Amp cached usage{updated}"));
+    }
+    if let Some(percent) = usage.other_percent_remaining {
+        let plan = usage.plan.as_deref().unwrap_or("Amp");
+        let reset = usage
+            .reset
+            .as_deref()
+            .map(|reset| format!(" · {reset}"))
+            .unwrap_or_default();
+        lines.push(format!("{plan} {percent}% remaining · Other usage{reset}"));
+    }
+    if let Some(percent) = usage.orb_percent_remaining {
+        let runtime = usage
+            .orb_runtime
+            .as_deref()
+            .map(|runtime| format!(" · {runtime} runtime"))
+            .unwrap_or_default();
+        lines.push(format!("Amp Orbs {percent}% remaining{runtime}"));
+    }
+    if let Some(credits) = &usage.individual_credits_remaining {
+        lines.push(format!("Amp credits {credits} remaining"));
+    }
+    lines
 }
 
 fn provider_ready_for_once<T>(provider: &ProviderState<T>, started_at: &DateTime<Local>) -> bool {
@@ -705,13 +872,15 @@ mod tests {
 
         render_clocks(&mut lines, &clocks, 58);
 
-        assert_eq!(lines.len(), 3);
-        assert_eq!(line_text(&lines[0]).chars().count(), 58);
-        assert_eq!(line_text(&lines[1]).chars().count(), 58);
-        assert!(line_text(&lines[0]).contains("MUMBAI"));
-        assert!(line_text(&lines[0]).contains("SEATTLE"));
+        assert_eq!(lines.len(), 5);
+        assert!(line_text(&lines[0]).starts_with("CLOCKS"));
+        assert!(line_text(&lines[1]).is_empty());
+        assert_eq!(line_text(&lines[2]).chars().count(), 58);
+        assert_eq!(line_text(&lines[3]).chars().count(), 58);
+        assert!(line_text(&lines[2]).contains("MUMBAI"));
+        assert!(line_text(&lines[2]).contains("SEATTLE"));
         assert!(
-            lines[0]
+            lines[2]
                 .spans
                 .iter()
                 .filter(|span| span.style.fg == Some(Color::Cyan))
@@ -719,7 +888,7 @@ mod tests {
                 == 4
         );
         assert!(
-            lines[1]
+            lines[3]
                 .spans
                 .iter()
                 .filter(|span| span.style.add_modifier.contains(Modifier::BOLD))
@@ -744,10 +913,10 @@ mod tests {
 
         render_clocks(&mut lines, &clocks, 40);
 
-        assert!(line_text(&lines[0]).contains("LONDON"));
-        assert!(line_text(&lines[0]).contains("TOKYO"));
+        assert!(line_text(&lines[2]).contains("LONDON"));
+        assert!(line_text(&lines[2]).contains("TOKYO"));
         assert_eq!(
-            lines[0]
+            lines[2]
                 .spans
                 .iter()
                 .filter(|span| span.style.fg == Some(Color::Cyan))
@@ -880,6 +1049,38 @@ mod tests {
     }
 
     #[test]
+    fn renders_wrapped_alerts_at_the_top_only_when_present() {
+        let today = date("2026-08-02");
+        let mut state = AppState::default();
+        state.amp_activity = ProviderState {
+            result: Some(AmpActivityUsage {
+                daily_usage_buckets: vec![crate::model::AmpDailyUsageBucket {
+                    date: today.to_string(),
+                    tokens: 1,
+                    ..crate::model::AmpDailyUsageBucket::default()
+                }],
+            }),
+            retry_after: Some(Duration::from_secs(40 * 60)),
+            ..ProviderState::default()
+        };
+        let mut lines = Vec::new();
+
+        render_alerts(&mut lines, &state, 40, today);
+        let text = lines.iter().map(line_text).collect::<Vec<_>>();
+
+        assert!(text[0].starts_with("ALERTS"));
+        assert!(text[1].is_empty());
+        assert!(text[2].starts_with("Amp Code activity history sync"));
+        assert!(text.join(" ").contains("resumes in ~40m"));
+        assert!(!text.join(" ").contains("Amp sync"));
+        assert!(text.iter().all(|line| line.chars().count() <= 40));
+
+        let mut empty = Vec::new();
+        render_alerts(&mut empty, &AppState::default(), 40, today);
+        assert!(empty.is_empty());
+    }
+
+    #[test]
     fn separates_activity_from_the_codex_quota() {
         let amp = ProviderState {
             result: Some(AmpUsage {
@@ -887,6 +1088,7 @@ mod tests {
                 other_percent_remaining: Some(82.0),
                 orb_percent_remaining: Some(64.5),
                 orb_runtime: Some("1h20m12.210s".into()),
+                individual_credits_remaining: Some("$1.01".into()),
                 reset: Some("resets upon renewal in 1 month".into()),
             }),
             ..ProviderState::default()
@@ -911,7 +1113,15 @@ mod tests {
         };
         let mut lines = Vec::new();
 
-        render_ai_at(&mut lines, &amp, &codex, &activity, 58, date("2026-08-02"));
+        render_ai_at(
+            &mut lines,
+            &amp,
+            &ProviderState::default(),
+            &codex,
+            &activity,
+            58,
+            date("2026-08-02"),
+        );
         let text = lines.iter().map(line_text).collect::<Vec<_>>();
         let megawatt = text
             .iter()
@@ -925,14 +1135,58 @@ mod tests {
             .iter()
             .position(|line| line.contains("Amp Orbs"))
             .unwrap();
+        let credits = text
+            .iter()
+            .position(|line| line.contains("Credits"))
+            .unwrap();
+        let amp_activity = text
+            .iter()
+            .position(|line| line.starts_with("AMP ACTIVITY"))
+            .unwrap();
+        let codex_activity = text
+            .iter()
+            .position(|line| line.contains("CODEX ACTIVITY"))
+            .unwrap();
 
         assert!(text[0].starts_with("AI"));
+        assert!(text.iter().all(|line| line.chars().count() <= 58));
         assert!(megawatt < orbs);
         assert!(orbs < quota);
+        assert!(quota < credits);
         assert!(text[orbs].contains("65% left"));
         assert!(text[orbs].contains("1h20m12.210s"));
-        assert!(text[quota + 1].is_empty());
-        assert!(text[quota + 2].contains("Jul"));
-        assert!(text[quota + 3].starts_with("Sun"));
+        assert!(text[megawatt].contains("Megawatt"));
+        assert!(text[megawatt].contains("Other usage"));
+        assert!(text[credits].contains("$1.01 remaining"));
+        assert!(credits < amp_activity);
+        assert_eq!(amp_activity, codex_activity);
+        assert!(text[codex_activity + 2].contains("Jul"));
+        assert!(text[codex_activity + 3].contains("Sun"));
+    }
+
+    #[test]
+    fn formats_all_amp_values_for_once_output() {
+        let state = ProviderState {
+            result: Some(AmpUsage {
+                plan: Some("Gigawatt".into()),
+                other_percent_remaining: Some(97.5),
+                orb_percent_remaining: Some(64.25),
+                orb_runtime: Some("12m3s".into()),
+                individual_credits_remaining: Some("$2.50".into()),
+                reset: Some("resets upon renewal in 4 days".into()),
+            }),
+            stale: true,
+            ..ProviderState::default()
+        };
+
+        let lines = amp_once_lines(&state);
+
+        assert_eq!(lines[0], "Amp cached usage");
+        assert_eq!(
+            lines[1],
+            "Gigawatt 97.5% remaining · Other usage · resets upon renewal in 4 days"
+        );
+        assert_eq!(lines[2], "Amp Orbs 64.25% remaining · 12m3s runtime");
+        assert_eq!(lines[3], "Amp credits $2.50 remaining");
     }
 }

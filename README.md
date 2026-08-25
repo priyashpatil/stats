@@ -9,7 +9,7 @@ Stats is a lightweight dashboard for your Mac's system health, Amp usage, and Co
 ## What it shows
 
 - CPU, RAM, GPU, storage, and network metrics
-- Amp subscription and Orb usage
+- Amp subscription, Orb usage/runtime, and individual credit balance
 - Codex weekly quota and token activity
 - Four customizable world clocks
 
@@ -78,6 +78,10 @@ stats --once
 
 Run `stats --help` to see all CLI options. The AI usage sections require both `amp` and `codex` to be available in `PATH`.
 
+Amp percentage meters show the remaining quota reported by `amp usage`. The non-Orb allowance is labeled with the subscription name, such as **Megawatt**, while **Amp Orbs** identifies the Orb allowance. Stats also shows renewal/reset text, Orb runtime, and the individual credit balance when Amp provides them. Orb runtime and credits are exact supplemental values rather than percentage charts because Amp does not report a corresponding limit for either value. Cached Amp values are explicitly marked until a fresh CLI response is available.
+
+The separate **Amp Activity** panel uses UTC-day ranges supported by `amp usage --details` to build a token calendar alongside covered/paid recorded cost, Orb runtime, model mix, and usage-source mix. Its grid always fills the available width. Stats requests only the days needed by that visible grid, caches completed UTC days permanently, and refreshes only the current partial day. A persistent rolling limiter caps Stats at 40 account/activity lookups and 24 historical lookups per hour, leaving at least 20 of Amp's shared hourly allowance for other consumers. If Amp still returns a rate limit, Stats keeps cached data visible and pauses all lookups until Amp's retry window or the next locally calculated rolling-window slot. Amp and Codex activity remain separate datasets and charts.
+
 GPU utilization uses the `ioreg` metrics provided by macOS and requires no elevated permissions.
 
 ## Configuration
@@ -131,6 +135,7 @@ The config requires four clocks with valid IANA time zone identifiers. `desktop.
 ## Privacy and security
 
 - Amp and Codex requests are made through their installed CLIs; credentials are not copied into Stats.
+- Stats parses and caches account-level and UTC-day aggregate usage only; it does not retain the signed-in identity, thread titles, thread IDs, or per-thread details printed by Amp.
 - The Codex app server listens only on `127.0.0.1` while Stats is running.
 - Parsed usage responses are cached in the operating system's user cache directory (`~/Library/Caches/stats` on macOS). On Unix systems, Stats restricts the directory to the current user (`0700`) and cache files to `0600`.
 
