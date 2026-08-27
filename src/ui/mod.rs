@@ -50,8 +50,7 @@ use crate::providers::codex::{codex_weekly_window, left_percent, ordered_buckets
 
 mod activity;
 use crate::config::{
-    AiDisplayConfig, AmpActivityDisplayConfig, ClocksDisplayConfig, CodexActivityDisplayConfig,
-    SectionDisplayConfig, SectionsConfig, SystemDisplayConfig,
+    AiDisplayConfig, ClocksDisplayConfig, SectionDisplayConfig, SectionsConfig, SystemDisplayConfig,
 };
 use activity::{
     amp_activity_history_days, amp_activity_sync_message, render_amp_activity,
@@ -248,10 +247,8 @@ fn stats_lines(
         &mut lines,
         &state.amp_activity,
         &state.codex_activity,
-        sections.amp_activity,
-        sections.codex_activity,
-        &display.amp_activity,
-        &display.codex_activity,
+        sections,
+        display,
         width,
         Utc::now().date_naive(),
     );
@@ -455,10 +452,8 @@ fn render_ai_at(
         lines,
         amp_activity,
         codex_activity,
-        true,
-        true,
-        &display.amp_activity,
-        &display.codex_activity,
+        &SectionsConfig::default(),
+        &display,
         width,
         today,
     );
@@ -468,14 +463,13 @@ fn render_activity_sections(
     lines: &mut Vec<Line<'static>>,
     amp: &ProviderState<AmpActivityUsage>,
     codex: &ProviderState<CodexActivityUsage>,
-    amp_enabled: bool,
-    codex_enabled: bool,
-    amp_display: &AmpActivityDisplayConfig,
-    codex_display: &CodexActivityDisplayConfig,
+    sections: &SectionsConfig,
+    display: &SectionDisplayConfig,
     width: usize,
     today: NaiveDate,
 ) {
-    if amp_enabled {
+    let amp_display = &display.amp_activity;
+    if sections.amp_activity {
         if amp_display.heading {
             section(lines, "Amp Activity", "", width);
         }
@@ -494,7 +488,8 @@ fn render_activity_sections(
             lines.push(Line::default());
         }
     }
-    if codex_enabled {
+    let codex_display = &display.codex_activity;
+    if sections.codex_activity {
         if codex_display.heading {
             section(lines, "Codex Activity", "", width);
         }
@@ -1237,17 +1232,19 @@ mod tests {
     #[test]
     fn renders_wrapped_alerts_at_the_top_only_when_present() {
         let today = date("2026-08-02");
-        let mut state = AppState::default();
-        state.amp_activity = ProviderState {
-            result: Some(AmpActivityUsage {
-                daily_usage_buckets: vec![crate::model::AmpDailyUsageBucket {
-                    date: today.to_string(),
-                    tokens: 1,
-                    ..crate::model::AmpDailyUsageBucket::default()
-                }],
-            }),
-            retry_after: Some(Duration::from_secs(40 * 60)),
-            ..ProviderState::default()
+        let state = AppState {
+            amp_activity: ProviderState {
+                result: Some(AmpActivityUsage {
+                    daily_usage_buckets: vec![crate::model::AmpDailyUsageBucket {
+                        date: today.to_string(),
+                        tokens: 1,
+                        ..crate::model::AmpDailyUsageBucket::default()
+                    }],
+                }),
+                retry_after: Some(Duration::from_secs(40 * 60)),
+                ..ProviderState::default()
+            },
+            ..AppState::default()
         };
         let mut lines = Vec::new();
 
@@ -1301,28 +1298,30 @@ mod tests {
             amp_activity: false,
             codex_activity: false,
         };
-        let mut display = SectionDisplayConfig::default();
-        display.clocks = ClocksDisplayConfig {
-            heading: false,
-            clock_1: true,
-            clock_2: false,
-            clock_3: false,
-            clock_4: false,
-        };
-        display.system = SystemDisplayConfig {
-            heading: true,
-            cpu: true,
-            ram: false,
-            gpu: false,
-            storage: false,
-            network: false,
-        };
-        display.ai = AiDisplayConfig {
-            heading: false,
-            amp_plan: false,
-            amp_orbs: true,
-            amp_credits: false,
-            codex_quota: false,
+        let display = SectionDisplayConfig {
+            clocks: ClocksDisplayConfig {
+                heading: false,
+                clock_1: true,
+                clock_2: false,
+                clock_3: false,
+                clock_4: false,
+            },
+            system: SystemDisplayConfig {
+                heading: true,
+                cpu: true,
+                ram: false,
+                gpu: false,
+                storage: false,
+                network: false,
+            },
+            ai: AiDisplayConfig {
+                heading: false,
+                amp_plan: false,
+                amp_orbs: true,
+                amp_credits: false,
+                codex_quota: false,
+            },
+            ..SectionDisplayConfig::default()
         };
         let state = AppState {
             amp: ProviderState {

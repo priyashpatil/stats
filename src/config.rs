@@ -29,7 +29,7 @@ pub(crate) struct SectionsConfig {
     pub(crate) codex_activity: bool,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
 pub(crate) struct SectionDisplayConfig {
     pub(crate) clocks: ClocksDisplayConfig,
     pub(crate) system: SystemDisplayConfig,
@@ -119,18 +119,6 @@ impl Default for SectionsConfig {
             ai: true,
             amp_activity: true,
             codex_activity: true,
-        }
-    }
-}
-
-impl Default for SectionDisplayConfig {
-    fn default() -> Self {
-        Self {
-            clocks: ClocksDisplayConfig::default(),
-            system: SystemDisplayConfig::default(),
-            ai: AiDisplayConfig::default(),
-            amp_activity: AmpActivityDisplayConfig::default(),
-            codex_activity: CodexActivityDisplayConfig::default(),
         }
     }
 }
