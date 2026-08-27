@@ -82,32 +82,6 @@ struct ClockChoice: Codable {
       }
   }()
 
-  static func choice(forLegacyTimezone timezone: String) -> ClockChoice? {
-    let legacyLabels = [
-      "Africa/Johannesburg": "Cape Town",
-      "America/Chicago": "Chicago",
-      "America/Los_Angeles": "Seattle",
-      "America/New_York": "New York",
-      "America/Sao_Paulo": "São Paulo",
-      "Asia/Dubai": "Dubai",
-      "Asia/Karachi": "Karachi",
-      "Asia/Kolkata": "Mumbai",
-      "Asia/Shanghai": "Shanghai",
-      "Asia/Tokyo": "Tokyo",
-      "Australia/Sydney": "Sydney",
-      "Europe/Berlin": "Berlin",
-      "Europe/Madrid": "Madrid",
-      "Europe/Rome": "Rome",
-      "Pacific/Auckland": "Auckland",
-    ]
-    if let label = legacyLabels[timezone],
-      let choice = all.first(where: { $0.label == label && $0.timezone == timezone })
-    {
-      return choice
-    }
-    return all.first(where: { $0.timezone == timezone })
-  }
-
   func title(at date: Date) -> String {
     let formatter = DateFormatter()
     formatter.locale = Locale.current

@@ -104,7 +104,7 @@ Use a different file for one invocation with `stats --config /path/to/config.tom
 A running dashboard watches the config file and reloads automatically after settings changes or direct edits.
 
 ```toml
-version = 1
+version = 2
 
 [[clocks]]
 label = "Mumbai"
@@ -129,6 +129,43 @@ ai = true
 amp_activity = true
 codex_activity = true
 
+[section_display.clocks]
+heading = true
+clock_1 = true
+clock_2 = true
+clock_3 = true
+clock_4 = true
+
+[section_display.system]
+heading = true
+cpu = true
+ram = true
+gpu = true
+storage = true
+network = true
+
+[section_display.ai]
+heading = true
+amp_plan = true
+amp_orbs = true
+amp_credits = true
+codex_quota = true
+
+[section_display.amp_activity]
+heading = true
+calendar = true
+daily_activity = true
+usage_summary = true
+models = true
+sources = true
+sync_alerts = true
+
+[section_display.codex_activity]
+heading = true
+calendar = true
+overview = true
+daily_activity = true
+
 [refresh]
 codex_seconds = 60
 amp_seconds = 300
@@ -139,7 +176,7 @@ font_size = 15
 show_scrollbar = false
 ```
 
-The config requires four clocks with valid IANA time zone identifiers. The `[sections]` flags independently control the Clocks, System, AI quota, Amp Activity, and Codex Activity sections; all default to `true`. Disabled data sections are not refreshed. `desktop.font_size` controls the embedded terminal in the macOS app and accepts values from 10 through 24. `desktop.show_scrollbar` controls the dashboard scrollbar and defaults to `false`. Launch-at-login and window placement remain native macOS settings.
+Version 2 requires the complete configuration shown above; older versions and omitted fields are rejected. The config requires four clocks with valid IANA time zone identifiers. The `[sections]` flags independently control the Clocks, System, AI quota, Amp Activity, and Codex Activity sections. The corresponding `[section_display.*]` tables control their headings and individual rows or charts. An enabled section must have at least one display option enabled; a disabled section may retain any display choices. Data providers are not refreshed when none of their visible controls require them. `desktop.font_size` controls the embedded terminal in the macOS app and accepts values from 10 through 24. `desktop.show_scrollbar` controls the dashboard scrollbar. Launch-at-login and window placement remain native macOS settings.
 
 ## Privacy and security
 

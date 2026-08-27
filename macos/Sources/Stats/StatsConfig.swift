@@ -2,11 +2,12 @@ import Foundation
 import TOML
 
 struct StatsConfig: Codable {
-  static let currentVersion = 1
+  static let currentVersion = 2
 
   var version: Int
   var clocks: [ClockChoice]
   var sections: SectionsConfig
+  var sectionDisplay: SectionDisplayConfig
   var refresh: RefreshConfig
   var desktop: DesktopConfig
 
@@ -14,27 +15,35 @@ struct StatsConfig: Codable {
     version: Int = currentVersion,
     clocks: [ClockChoice] = ClockChoice.defaults,
     sections: SectionsConfig = SectionsConfig(),
+    sectionDisplay: SectionDisplayConfig = SectionDisplayConfig(),
     refresh: RefreshConfig = RefreshConfig(),
     desktop: DesktopConfig = DesktopConfig()
   ) {
     self.version = version
     self.clocks = clocks
     self.sections = sections
+    self.sectionDisplay = sectionDisplay
     self.refresh = refresh
     self.desktop = desktop
   }
 
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    version = try container.decodeIfPresent(Int.self, forKey: .version) ?? Self.currentVersion
-    clocks = try container.decodeIfPresent([ClockChoice].self, forKey: .clocks)
-      ?? ClockChoice.defaults
-    sections = try container.decodeIfPresent(SectionsConfig.self, forKey: .sections)
-      ?? SectionsConfig()
-    refresh = try container.decodeIfPresent(RefreshConfig.self, forKey: .refresh)
-      ?? RefreshConfig()
-    desktop = try container.decodeIfPresent(DesktopConfig.self, forKey: .desktop)
-      ?? DesktopConfig()
+    version = try container.decode(Int.self, forKey: .version)
+    clocks = try container.decode([ClockChoice].self, forKey: .clocks)
+    sections = try container.decode(SectionsConfig.self, forKey: .sections)
+    sectionDisplay = try container.decode(SectionDisplayConfig.self, forKey: .sectionDisplay)
+    refresh = try container.decode(RefreshConfig.self, forKey: .refresh)
+    desktop = try container.decode(DesktopConfig.self, forKey: .desktop)
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case version
+    case clocks
+    case sections
+    case sectionDisplay = "section_display"
+    case refresh
+    case desktop
   }
 }
 
@@ -69,12 +78,259 @@ struct SectionsConfig: Codable, Equatable {
 
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    clocks = try container.decodeIfPresent(Bool.self, forKey: .clocks) ?? true
-    system = try container.decodeIfPresent(Bool.self, forKey: .system) ?? true
-    ai = try container.decodeIfPresent(Bool.self, forKey: .ai) ?? true
-    ampActivity = try container.decodeIfPresent(Bool.self, forKey: .ampActivity) ?? true
-    codexActivity = try container.decodeIfPresent(Bool.self, forKey: .codexActivity) ?? true
+    clocks = try container.decode(Bool.self, forKey: .clocks)
+    system = try container.decode(Bool.self, forKey: .system)
+    ai = try container.decode(Bool.self, forKey: .ai)
+    ampActivity = try container.decode(Bool.self, forKey: .ampActivity)
+    codexActivity = try container.decode(Bool.self, forKey: .codexActivity)
   }
+}
+
+struct SectionDisplayConfig: Codable, Equatable {
+  var clocks: ClocksDisplayConfig
+  var system: SystemDisplayConfig
+  var ai: AIDisplayConfig
+  var ampActivity: AmpActivityDisplayConfig
+  var codexActivity: CodexActivityDisplayConfig
+
+  init(
+    clocks: ClocksDisplayConfig = ClocksDisplayConfig(),
+    system: SystemDisplayConfig = SystemDisplayConfig(),
+    ai: AIDisplayConfig = AIDisplayConfig(),
+    ampActivity: AmpActivityDisplayConfig = AmpActivityDisplayConfig(),
+    codexActivity: CodexActivityDisplayConfig = CodexActivityDisplayConfig()
+  ) {
+    self.clocks = clocks
+    self.system = system
+    self.ai = ai
+    self.ampActivity = ampActivity
+    self.codexActivity = codexActivity
+  }
+
+  enum CodingKeys: String, CodingKey {
+    case clocks
+    case system
+    case ai
+    case ampActivity = "amp_activity"
+    case codexActivity = "codex_activity"
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    clocks = try container.decode(ClocksDisplayConfig.self, forKey: .clocks)
+    system = try container.decode(SystemDisplayConfig.self, forKey: .system)
+    ai = try container.decode(AIDisplayConfig.self, forKey: .ai)
+    ampActivity = try container.decode(AmpActivityDisplayConfig.self, forKey: .ampActivity)
+    codexActivity = try container.decode(CodexActivityDisplayConfig.self, forKey: .codexActivity)
+  }
+}
+
+struct ClocksDisplayConfig: Codable, Equatable {
+  var heading = true
+  var clock1 = true
+  var clock2 = true
+  var clock3 = true
+  var clock4 = true
+
+  enum CodingKeys: String, CodingKey {
+    case heading
+    case clock1 = "clock_1"
+    case clock2 = "clock_2"
+    case clock3 = "clock_3"
+    case clock4 = "clock_4"
+  }
+
+  init(
+    heading: Bool = true,
+    clock1: Bool = true,
+    clock2: Bool = true,
+    clock3: Bool = true,
+    clock4: Bool = true
+  ) {
+    self.heading = heading
+    self.clock1 = clock1
+    self.clock2 = clock2
+    self.clock3 = clock3
+    self.clock4 = clock4
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    heading = try container.decode(Bool.self, forKey: .heading)
+    clock1 = try container.decode(Bool.self, forKey: .clock1)
+    clock2 = try container.decode(Bool.self, forKey: .clock2)
+    clock3 = try container.decode(Bool.self, forKey: .clock3)
+    clock4 = try container.decode(Bool.self, forKey: .clock4)
+  }
+
+  var hasEnabledOption: Bool { heading || clock1 || clock2 || clock3 || clock4 }
+}
+
+struct SystemDisplayConfig: Codable, Equatable {
+  var heading = true
+  var cpu = true
+  var ram = true
+  var gpu = true
+  var storage = true
+  var network = true
+
+  init(
+    heading: Bool = true,
+    cpu: Bool = true,
+    ram: Bool = true,
+    gpu: Bool = true,
+    storage: Bool = true,
+    network: Bool = true
+  ) {
+    self.heading = heading
+    self.cpu = cpu
+    self.ram = ram
+    self.gpu = gpu
+    self.storage = storage
+    self.network = network
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    heading = try container.decode(Bool.self, forKey: .heading)
+    cpu = try container.decode(Bool.self, forKey: .cpu)
+    ram = try container.decode(Bool.self, forKey: .ram)
+    gpu = try container.decode(Bool.self, forKey: .gpu)
+    storage = try container.decode(Bool.self, forKey: .storage)
+    network = try container.decode(Bool.self, forKey: .network)
+  }
+
+  var hasEnabledOption: Bool { heading || cpu || ram || gpu || storage || network }
+}
+
+struct AIDisplayConfig: Codable, Equatable {
+  var heading = true
+  var ampPlan = true
+  var ampOrbs = true
+  var ampCredits = true
+  var codexQuota = true
+
+  enum CodingKeys: String, CodingKey {
+    case heading
+    case ampPlan = "amp_plan"
+    case ampOrbs = "amp_orbs"
+    case ampCredits = "amp_credits"
+    case codexQuota = "codex_quota"
+  }
+
+  init(
+    heading: Bool = true,
+    ampPlan: Bool = true,
+    ampOrbs: Bool = true,
+    ampCredits: Bool = true,
+    codexQuota: Bool = true
+  ) {
+    self.heading = heading
+    self.ampPlan = ampPlan
+    self.ampOrbs = ampOrbs
+    self.ampCredits = ampCredits
+    self.codexQuota = codexQuota
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    heading = try container.decode(Bool.self, forKey: .heading)
+    ampPlan = try container.decode(Bool.self, forKey: .ampPlan)
+    ampOrbs = try container.decode(Bool.self, forKey: .ampOrbs)
+    ampCredits = try container.decode(Bool.self, forKey: .ampCredits)
+    codexQuota = try container.decode(Bool.self, forKey: .codexQuota)
+  }
+
+  var hasEnabledOption: Bool { heading || ampPlan || ampOrbs || ampCredits || codexQuota }
+}
+
+struct AmpActivityDisplayConfig: Codable, Equatable {
+  var heading = true
+  var calendar = true
+  var dailyActivity = true
+  var usageSummary = true
+  var models = true
+  var sources = true
+  var syncAlerts = true
+
+  enum CodingKeys: String, CodingKey {
+    case heading
+    case calendar
+    case dailyActivity = "daily_activity"
+    case usageSummary = "usage_summary"
+    case models
+    case sources
+    case syncAlerts = "sync_alerts"
+  }
+
+  init(
+    heading: Bool = true,
+    calendar: Bool = true,
+    dailyActivity: Bool = true,
+    usageSummary: Bool = true,
+    models: Bool = true,
+    sources: Bool = true,
+    syncAlerts: Bool = true
+  ) {
+    self.heading = heading
+    self.calendar = calendar
+    self.dailyActivity = dailyActivity
+    self.usageSummary = usageSummary
+    self.models = models
+    self.sources = sources
+    self.syncAlerts = syncAlerts
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    heading = try container.decode(Bool.self, forKey: .heading)
+    calendar = try container.decode(Bool.self, forKey: .calendar)
+    dailyActivity = try container.decode(Bool.self, forKey: .dailyActivity)
+    usageSummary = try container.decode(Bool.self, forKey: .usageSummary)
+    models = try container.decode(Bool.self, forKey: .models)
+    sources = try container.decode(Bool.self, forKey: .sources)
+    syncAlerts = try container.decode(Bool.self, forKey: .syncAlerts)
+  }
+
+  var hasEnabledOption: Bool {
+    heading || calendar || dailyActivity || usageSummary || models || sources || syncAlerts
+  }
+}
+
+struct CodexActivityDisplayConfig: Codable, Equatable {
+  var heading = true
+  var calendar = true
+  var overview = true
+  var dailyActivity = true
+
+  enum CodingKeys: String, CodingKey {
+    case heading
+    case calendar
+    case overview
+    case dailyActivity = "daily_activity"
+  }
+
+  init(
+    heading: Bool = true,
+    calendar: Bool = true,
+    overview: Bool = true,
+    dailyActivity: Bool = true
+  ) {
+    self.heading = heading
+    self.calendar = calendar
+    self.overview = overview
+    self.dailyActivity = dailyActivity
+  }
+
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: CodingKeys.self)
+    heading = try container.decode(Bool.self, forKey: .heading)
+    calendar = try container.decode(Bool.self, forKey: .calendar)
+    overview = try container.decode(Bool.self, forKey: .overview)
+    dailyActivity = try container.decode(Bool.self, forKey: .dailyActivity)
+  }
+
+  var hasEnabledOption: Bool { heading || calendar || overview || dailyActivity }
 }
 
 struct RefreshConfig: Codable {
@@ -96,9 +352,9 @@ struct RefreshConfig: Codable {
 
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    codexSeconds = try container.decodeIfPresent(Int.self, forKey: .codexSeconds) ?? 60
-    ampSeconds = try container.decodeIfPresent(Int.self, forKey: .ampSeconds) ?? 300
-    storageSeconds = try container.decodeIfPresent(Int.self, forKey: .storageSeconds) ?? 300
+    codexSeconds = try container.decode(Int.self, forKey: .codexSeconds)
+    ampSeconds = try container.decode(Int.self, forKey: .ampSeconds)
+    storageSeconds = try container.decode(Int.self, forKey: .storageSeconds)
   }
 }
 
@@ -121,9 +377,8 @@ struct DesktopConfig: Codable {
 
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    fontSize = try container.decodeIfPresent(Int.self, forKey: .fontSize)
-      ?? StatsConfigStore.defaultFontSize
-    showScrollbar = try container.decodeIfPresent(Bool.self, forKey: .showScrollbar) ?? false
+    fontSize = try container.decode(Int.self, forKey: .fontSize)
+    showScrollbar = try container.decode(Bool.self, forKey: .showScrollbar)
   }
 }
 
@@ -134,18 +389,12 @@ final class StatsConfigStore {
   let url: URL
   private(set) var config: StatsConfig
 
-  init(
-    url: URL = StatsConfigStore.defaultURL(),
-    defaults: UserDefaults = .standard
-  ) throws {
+  init(url: URL = StatsConfigStore.defaultURL()) throws {
     self.url = url
     if FileManager.default.fileExists(atPath: url.path) {
       config = try Self.load(url)
     } else {
-      config = Self.migratedConfig(from: defaults)
-      if Self.hasLegacyConfig(in: defaults) {
-        try write(config)
-      }
+      config = StatsConfig()
     }
   }
 
@@ -170,9 +419,10 @@ final class StatsConfigStore {
     config = updated
   }
 
-  func saveSections(_ sections: SectionsConfig) throws {
+  func saveSectionSettings(_ sections: SectionsConfig, display: SectionDisplayConfig) throws {
     var updated = try configForUpdate()
     updated.sections = sections
+    updated.sectionDisplay = display
     try Self.validate(updated)
     try write(updated)
     config = updated
@@ -254,6 +504,26 @@ final class StatsConfigStore {
         throw ConfigError.invalid("unknown clock timezone: \(clock.timezone)")
       }
     }
+    let requirements: [(Bool, Bool, String)] = [
+      (config.sections.clocks, config.sectionDisplay.clocks.hasEnabledOption, "clocks"),
+      (config.sections.system, config.sectionDisplay.system.hasEnabledOption, "system"),
+      (config.sections.ai, config.sectionDisplay.ai.hasEnabledOption, "ai"),
+      (
+        config.sections.ampActivity,
+        config.sectionDisplay.ampActivity.hasEnabledOption,
+        "amp_activity"
+      ),
+      (
+        config.sections.codexActivity,
+        config.sectionDisplay.codexActivity.hasEnabledOption,
+        "codex_activity"
+      ),
+    ]
+    for (enabled, hasEnabledOption, section) in requirements where enabled && !hasEnabledOption {
+      throw ConfigError.invalid(
+        "sections.\(section) requires at least one section_display.\(section) option"
+      )
+    }
     guard config.refresh.codexSeconds >= 5 else {
       throw ConfigError.invalid("refresh.codex_seconds must be at least 5")
     }
@@ -268,35 +538,6 @@ final class StatsConfigStore {
     }
   }
 
-  private static func hasLegacyConfig(in defaults: UserDefaults) -> Bool {
-    defaults.object(forKey: "selectedClockCities") != nil
-      || defaults.object(forKey: "selectedClockTimezones") != nil
-      || defaults.object(forKey: "terminalFontSize") != nil
-  }
-
-  private static func migratedConfig(from defaults: UserDefaults) -> StatsConfig {
-    let storedIDs = defaults.stringArray(forKey: "selectedClockCities")
-    var clocks = storedIDs?.compactMap { id in
-      ClockChoice.all.first(where: { $0.id == id })
-    } ?? []
-    if storedIDs == nil {
-      clocks = defaults.stringArray(forKey: "selectedClockTimezones")?
-        .compactMap(ClockChoice.choice(forLegacyTimezone:)) ?? []
-    }
-    for choice in ClockChoice.defaults where clocks.count < 4 {
-      if !clocks.contains(where: { $0.id == choice.id }) {
-        clocks.append(choice)
-      }
-    }
-
-    let storedFontSize = defaults.integer(forKey: "terminalFontSize")
-    let fontSize = availableFontSizes.contains(storedFontSize)
-      ? storedFontSize : defaultFontSize
-    return StatsConfig(
-      clocks: Array(clocks.prefix(4)),
-      desktop: DesktopConfig(fontSize: fontSize)
-    )
-  }
 }
 
 enum ConfigError: LocalizedError {

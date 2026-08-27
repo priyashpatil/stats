@@ -58,10 +58,14 @@ fn run() -> Result<AppOutcome, String> {
     }
     match args.mode {
         Mode::Stats => {
-            if (args.sections.ai || args.sections.amp_activity) && !command_exists("amp") {
+            let amp_needed = args.section_display.amp_ai_needed(&args.sections)
+                || args.section_display.amp_activity_needed(&args.sections);
+            let codex_needed = args.section_display.codex_ai_needed(&args.sections)
+                || args.section_display.codex_activity_needed(&args.sections);
+            if amp_needed && !command_exists("amp") {
                 return Err("amp not found in PATH".into());
             }
-            if (args.sections.ai || args.sections.codex_activity) && !command_exists("codex") {
+            if codex_needed && !command_exists("codex") {
                 return Err("codex not found in PATH".into());
             }
             run_stats(args)
@@ -76,7 +80,12 @@ fn run() -> Result<AppOutcome, String> {
 }
 
 fn run_stats(args: Args) -> Result<AppOutcome, String> {
-    let codex_enabled = args.sections.ai || args.sections.codex_activity;
+    let system_needed = args.section_display.system_needed(&args.sections);
+    let amp_ai_needed = args.section_display.amp_ai_needed(&args.sections);
+    let codex_ai_needed = args.section_display.codex_ai_needed(&args.sections);
+    let amp_activity_needed = args.section_display.amp_activity_needed(&args.sections);
+    let codex_activity_needed = args.section_display.codex_activity_needed(&args.sections);
+    let codex_enabled = codex_ai_needed || codex_activity_needed;
     let port = codex_enabled.then(pick_port).transpose()?;
     let mut codex_proc = port.map(start_codex_server).transpose()?;
     let stop = Arc::new(AtomicBool::new(false));
@@ -87,15 +96,15 @@ fn run_stats(args: Args) -> Result<AppOutcome, String> {
         if let (Some(port), Some(codex_proc)) = (port, codex_proc.as_mut()) {
             wait_ready(port, codex_proc)?;
         }
-        if args.sections.system {
+        if system_needed {
             prime_system(&state);
             spawn_refresh_system(&state, &stop, args.storage_interval);
         }
 
-        if args.sections.ai {
+        if amp_ai_needed {
             spawn_refresh_amp(&state, &stop, args.amp_interval);
         }
-        if args.sections.amp_activity {
+        if amp_activity_needed {
             spawn_refresh_amp_activity(&state, &stop, args.amp_interval);
         }
         if let Some(port) = port {
@@ -104,13 +113,13 @@ fn run_stats(args: Args) -> Result<AppOutcome, String> {
                 &stop,
                 port,
                 args.interval,
-                args.sections.ai,
-                args.sections.codex_activity,
+                codex_ai_needed,
+                codex_activity_needed,
             );
         }
 
         if args.once {
-            print_once(&state, &args.sections);
+            print_once(&state, &args.sections, &args.section_display);
             Ok(AppOutcome::Done)
         } else {
             run_tui(
@@ -118,6 +127,7 @@ fn run_stats(args: Args) -> Result<AppOutcome, String> {
                 &stop,
                 &args.clocks,
                 &args.sections,
+                &args.section_display,
                 args.show_scrollbar,
                 &args.config_path,
             )

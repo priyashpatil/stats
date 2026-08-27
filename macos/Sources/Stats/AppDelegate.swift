@@ -207,6 +207,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       fontSize: configStore.config.desktop.fontSize,
       showsScrollbar: configStore.config.desktop.showScrollbar,
       sections: configStore.config.sections,
+      sectionDisplay: configStore.config.sectionDisplay,
       configPath: configStore.url.path,
       onLaunchAtLoginChange: { [launchAtLoginController] enabled in
         launchAtLoginController.setEnabled(enabled)
@@ -231,10 +232,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
           return false
         }
       },
-      onSectionsChange: { [weak self] sections in
+      onSectionSettingsChange: { [weak self] sections, display in
         guard let self else { return false }
         do {
-          try configStore.saveSections(sections)
+          try configStore.saveSectionSettings(sections, display: display)
           return true
         } catch {
           self.showConfigErrorAlert(error)

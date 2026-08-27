@@ -5,6 +5,7 @@ use ratatui::style::Color;
 use ratatui::text::{Line, Span};
 
 use super::{CODEX_GUTTER_WIDTH, ai_status_row, dim, equal_column_widths, fixed, span};
+use crate::config::{AmpActivityDisplayConfig, CodexActivityDisplayConfig};
 use crate::model::{
     AmpActivityUsage, AmpTokenCategory, CodexActivitySummary, CodexActivityUsage,
     CodexDailyUsageBucket, DailyTokenUsage, ProviderState,
@@ -37,6 +38,7 @@ pub(super) fn render_codex_activity(
     activity: &ProviderState<CodexActivityUsage>,
     width: usize,
     utc_today: NaiveDate,
+    display: &CodexActivityDisplayConfig,
 ) {
     if activity_week_capacity(width) == 0 {
         return;
@@ -64,7 +66,14 @@ pub(super) fn render_codex_activity(
         ]));
         return;
     };
-    render_activity_calendar(lines, &calendar, width, true);
+    render_activity_calendar(
+        lines,
+        &calendar,
+        width,
+        display.calendar,
+        display.overview,
+        display.daily_activity,
+    );
 }
 
 pub(super) fn render_amp_activity(
@@ -72,6 +81,7 @@ pub(super) fn render_amp_activity(
     activity: &ProviderState<AmpActivityUsage>,
     width: usize,
     utc_today: NaiveDate,
+    display: &AmpActivityDisplayConfig,
 ) {
     if activity_week_capacity(width) == 0 {
         return;
@@ -107,8 +117,14 @@ pub(super) fn render_amp_activity(
     let Some(calendar) = activity_calendar(&codex_shaped, width, utc_today) else {
         return;
     };
-    render_activity_calendar(lines, &calendar, width, false);
-    lines.push(Line::default());
+    render_activity_calendar(
+        lines,
+        &calendar,
+        width,
+        display.calendar,
+        false,
+        display.daily_activity,
+    );
     let detail_start = calendar
         .utc_today
         .checked_sub_days(Days::new(AMP_DETAIL_DAYS - 1))
@@ -124,7 +140,13 @@ pub(super) fn render_amp_activity(
             .cloned()
             .collect(),
     };
-    lines.extend(amp_detail_rows(&recent_activity, width, calendar.utc_today));
+    let details = amp_detail_rows(&recent_activity, width, calendar.utc_today, display);
+    if !details.is_empty() {
+        if display.calendar || display.daily_activity {
+            lines.push(Line::default());
+        }
+        lines.extend(details);
+    }
 }
 
 pub(super) fn amp_activity_sync_message(
@@ -189,45 +211,61 @@ fn render_activity_calendar(
     lines: &mut Vec<Line<'static>>,
     calendar: &ActivityCalendar,
     width: usize,
+    show_calendar: bool,
     show_overview: bool,
+    show_daily_activity: bool,
 ) {
-    lines.push(activity_month_labels(&calendar));
-    for day_offset in 0..7 {
-        let mut spans = vec![dim(fixed(
-            ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][day_offset],
-            calendar.gutter_width,
-        ))];
-        for week in 0..calendar.weeks {
-            if week > 0 {
-                spans.push(Span::raw(" "));
+    let mut blocks = Vec::new();
+    if show_calendar {
+        let mut rows = vec![activity_month_labels(calendar)];
+        for day_offset in 0..7 {
+            let mut spans = vec![dim(fixed(
+                ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][day_offset],
+                calendar.gutter_width,
+            ))];
+            for week in 0..calendar.weeks {
+                if week > 0 {
+                    spans.push(Span::raw(" "));
+                }
+                let date = calendar
+                    .start_week
+                    .checked_add_days(Days::new((week * 7 + day_offset) as u64))
+                    .unwrap_or(calendar.utc_today);
+                if date > calendar.utc_today {
+                    spans.push(Span::raw(" "));
+                    continue;
+                }
+                let tokens = calendar.tokens_by_date.get(&date).copied().unwrap_or(0);
+                if tokens == 0 {
+                    spans.push(dim("·"));
+                } else {
+                    spans.push(span(
+                        "▪",
+                        activity_green(activity_intensity(tokens, calendar.quartiles)),
+                        true,
+                    ));
+                }
             }
-            let date = calendar
-                .start_week
-                .checked_add_days(Days::new((week * 7 + day_offset) as u64))
-                .unwrap_or(calendar.utc_today);
-            if date > calendar.utc_today {
-                spans.push(Span::raw(" "));
-                continue;
-            }
-            let tokens = calendar.tokens_by_date.get(&date).copied().unwrap_or(0);
-            if tokens == 0 {
-                spans.push(dim("·"));
-            } else {
-                spans.push(span(
-                    "▪",
-                    activity_green(activity_intensity(tokens, calendar.quartiles)),
-                    true,
-                ));
-            }
+            rows.push(Line::from(spans));
         }
-        lines.push(Line::from(spans));
+        blocks.push(rows);
     }
-    lines.push(Line::default());
     if show_overview {
-        lines.extend(activity_overview_rows(&calendar, width));
-        lines.push(Line::default());
+        blocks.push(activity_overview_rows(calendar, width));
     }
-    lines.extend(activity_daily_rows(&calendar, width));
+    if show_daily_activity {
+        blocks.push(activity_daily_rows(calendar, width));
+    }
+    for (index, block) in blocks
+        .into_iter()
+        .filter(|block| !block.is_empty())
+        .enumerate()
+    {
+        if index > 0 {
+            lines.push(Line::default());
+        }
+        lines.extend(block);
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -256,60 +294,68 @@ fn amp_detail_rows(
     activity: &AmpActivityUsage,
     width: usize,
     utc_today: NaiveDate,
+    display: &AmpActivityDisplayConfig,
 ) -> Vec<Line<'static>> {
     let periods = [1_u64, 7, AMP_DETAIL_DAYS];
-    let mut rows = vec![amp_table_row(
-        "Metric",
-        ["1D".into(), "7D".into(), "30D".into()],
-        width,
-    )];
-    rows.push(amp_table_row(
-        "Covered",
-        periods.map(|days| {
-            format!(
-                "${:.2}",
-                period_buckets(activity, utc_today, days)
-                    .map(|bucket| bucket.covered_cost)
-                    .sum::<f64>()
-            )
-        }),
-        width,
-    ));
-    rows.push(amp_table_row(
-        "Paid",
-        periods.map(|days| {
-            format!(
-                "${:.2}",
-                period_buckets(activity, utc_today, days)
-                    .map(|bucket| bucket.paid_cost)
-                    .sum::<f64>()
-            )
-        }),
-        width,
-    ));
-    rows.push(amp_table_row(
-        "Orb time",
-        periods.map(|days| {
-            compact_duration(
-                period_buckets(activity, utc_today, days)
-                    .map(|bucket| bucket.orb_runtime_millis)
-                    .sum(),
-            )
-        }),
-        width,
-    ));
-    rows.extend(category_table_rows(
-        activity,
-        AmpCategoryKind::Models,
-        width,
-        utc_today,
-    ));
-    rows.extend(category_table_rows(
-        activity,
-        AmpCategoryKind::Sources,
-        width,
-        utc_today,
-    ));
+    let mut rows = Vec::new();
+    if display.usage_summary {
+        rows.push(amp_table_row(
+            "Metric",
+            ["1D".into(), "7D".into(), "30D".into()],
+            width,
+        ));
+        rows.push(amp_table_row(
+            "Covered",
+            periods.map(|days| {
+                format!(
+                    "${:.2}",
+                    period_buckets(activity, utc_today, days)
+                        .map(|bucket| bucket.covered_cost)
+                        .sum::<f64>()
+                )
+            }),
+            width,
+        ));
+        rows.push(amp_table_row(
+            "Paid",
+            periods.map(|days| {
+                format!(
+                    "${:.2}",
+                    period_buckets(activity, utc_today, days)
+                        .map(|bucket| bucket.paid_cost)
+                        .sum::<f64>()
+                )
+            }),
+            width,
+        ));
+        rows.push(amp_table_row(
+            "Orb time",
+            periods.map(|days| {
+                compact_duration(
+                    period_buckets(activity, utc_today, days)
+                        .map(|bucket| bucket.orb_runtime_millis)
+                        .sum(),
+                )
+            }),
+            width,
+        ));
+    }
+    if display.models {
+        rows.extend(category_table_rows(
+            activity,
+            AmpCategoryKind::Models,
+            width,
+            utc_today,
+        ));
+    }
+    if display.sources {
+        rows.extend(category_table_rows(
+            activity,
+            AmpCategoryKind::Sources,
+            width,
+            utc_today,
+        ));
+    }
     rows
 }
 
@@ -769,7 +815,13 @@ mod tests {
         };
         let mut lines = Vec::new();
 
-        render_codex_activity(&mut lines, &state, 30, date("2026-08-01"));
+        render_codex_activity(
+            &mut lines,
+            &state,
+            30,
+            date("2026-08-01"),
+            &CodexActivityDisplayConfig::default(),
+        );
 
         assert_eq!(lines.len(), 14);
         assert_eq!(line_text(&lines[1]).chars().count(), 30);
@@ -802,7 +854,13 @@ mod tests {
         };
         let mut lines = Vec::new();
 
-        render_codex_activity(&mut lines, &state, 30, date("2026-08-05"));
+        render_codex_activity(
+            &mut lines,
+            &state,
+            30,
+            date("2026-08-05"),
+            &CodexActivityDisplayConfig::default(),
+        );
 
         assert!(line_text(&lines[4]).ends_with('▪'));
         assert!(line_text(&lines[5]).ends_with(' '));
@@ -1075,7 +1133,13 @@ mod tests {
         let mut lines = Vec::new();
 
         let sync = amp_activity_sync_message(&state, 40, date("2026-08-02")).unwrap();
-        render_amp_activity(&mut lines, &state, 40, date("2026-08-02"));
+        render_amp_activity(
+            &mut lines,
+            &state,
+            40,
+            date("2026-08-02"),
+            &AmpActivityDisplayConfig::default(),
+        );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
         let text = rendered.join("\n");
         let covered = rendered

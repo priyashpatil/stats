@@ -8,8 +8,11 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
   private var panes: [NSViewController] = []
   private let sidebarItems = [
     (title: "General", symbol: "gearshape"),
-    (title: "Sections", symbol: "rectangle.3.group"),
     (title: "Clocks", symbol: "clock"),
+    (title: "System", symbol: "cpu"),
+    (title: "AI", symbol: "sparkles"),
+    (title: "Amp Activity", symbol: "chart.bar"),
+    (title: "Codex Activity", symbol: "calendar"),
     (title: "About", symbol: "info.circle"),
   ]
   private let sidebarTable = NSTableView()
@@ -17,10 +20,13 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
   private var clockPickerPanel: ClockPickerPanel?
   private var selectedClockChoices: [ClockChoice]
   private var selectedSections: SectionsConfig
+  private var selectedSectionDisplay: SectionDisplayConfig
+  private var sectionButtons: [String: NSButton] = [:]
+  private var clockPickers: [NSControl] = []
   private let onLaunchAtLoginChange: (Bool) -> Bool
   private let onFontSizeChange: (Int) -> Void
   private let onShowScrollbarChange: (Bool) -> Bool
-  private let onSectionsChange: (SectionsConfig) -> Bool
+  private let onSectionSettingsChange: (SectionsConfig, SectionDisplayConfig) -> Bool
   private let onClockChoicesChange: ([ClockChoice]) -> Void
   private let onOpenConfig: () -> Void
 
@@ -30,20 +36,22 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     fontSize: Int,
     showsScrollbar: Bool,
     sections: SectionsConfig,
+    sectionDisplay: SectionDisplayConfig,
     configPath: String,
     onLaunchAtLoginChange: @escaping (Bool) -> Bool,
     onFontSizeChange: @escaping (Int) -> Void,
     onShowScrollbarChange: @escaping (Bool) -> Bool,
-    onSectionsChange: @escaping (SectionsConfig) -> Bool,
+    onSectionSettingsChange: @escaping (SectionsConfig, SectionDisplayConfig) -> Bool,
     onClockChoicesChange: @escaping ([ClockChoice]) -> Void,
     onOpenConfig: @escaping () -> Void
   ) {
     self.selectedClockChoices = selectedClockChoices
     self.selectedSections = sections
+    self.selectedSectionDisplay = sectionDisplay
     self.onLaunchAtLoginChange = onLaunchAtLoginChange
     self.onFontSizeChange = onFontSizeChange
     self.onShowScrollbarChange = onShowScrollbarChange
-    self.onSectionsChange = onSectionsChange
+    self.onSectionSettingsChange = onSectionSettingsChange
     self.onClockChoicesChange = onClockChoicesChange
     self.onOpenConfig = onOpenConfig
     let window = NSWindow(
@@ -62,6 +70,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
       fontSize: fontSize,
       showsScrollbar: showsScrollbar,
       sections: sections,
+      sectionDisplay: sectionDisplay,
       configPath: configPath
     )
   }
@@ -76,6 +85,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     fontSize: Int,
     showsScrollbar: Bool,
     sections: SectionsConfig,
+    sectionDisplay: SectionDisplayConfig,
     configPath: String
   ) {
     panes = [
@@ -85,10 +95,68 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         showsScrollbar: showsScrollbar,
         configPath: configPath
       ),
-      sectionsViewController(sections: sections),
-      clocksViewController(selectedClockChoices: selectedClockChoices),
+      clocksViewController(
+        selectedClockChoices: selectedClockChoices,
+        enabled: sections.clocks,
+        display: sectionDisplay.clocks
+      ),
+      sectionViewController(
+        title: "System",
+        help: "Choose which system metrics Stats displays.",
+        section: "system",
+        enabled: sections.system,
+        choices: [
+          ("Section heading", "heading", sectionDisplay.system.heading),
+          ("CPU", "cpu", sectionDisplay.system.cpu),
+          ("RAM", "ram", sectionDisplay.system.ram),
+          ("GPU", "gpu", sectionDisplay.system.gpu),
+          ("Storage", "storage", sectionDisplay.system.storage),
+          ("Network", "network", sectionDisplay.system.network),
+        ]
+      ),
+      sectionViewController(
+        title: "AI",
+        help: "Choose which AI usage information Stats displays.",
+        section: "ai",
+        enabled: sections.ai,
+        choices: [
+          ("Section heading", "heading", sectionDisplay.ai.heading),
+          ("Amp plan usage", "ampPlan", sectionDisplay.ai.ampPlan),
+          ("Amp Orbs", "ampOrbs", sectionDisplay.ai.ampOrbs),
+          ("Amp credits", "ampCredits", sectionDisplay.ai.ampCredits),
+          ("Codex quota", "codexQuota", sectionDisplay.ai.codexQuota),
+        ]
+      ),
+      sectionViewController(
+        title: "Amp Activity",
+        help: "Choose which Amp activity details Stats displays.",
+        section: "ampActivity",
+        enabled: sections.ampActivity,
+        choices: [
+          ("Section heading", "heading", sectionDisplay.ampActivity.heading),
+          ("Activity calendar", "calendar", sectionDisplay.ampActivity.calendar),
+          ("Daily activity", "dailyActivity", sectionDisplay.ampActivity.dailyActivity),
+          ("Cost and runtime summary", "usageSummary", sectionDisplay.ampActivity.usageSummary),
+          ("Models", "models", sectionDisplay.ampActivity.models),
+          ("Sources", "sources", sectionDisplay.ampActivity.sources),
+          ("Sync alerts", "syncAlerts", sectionDisplay.ampActivity.syncAlerts),
+        ]
+      ),
+      sectionViewController(
+        title: "Codex Activity",
+        help: "Choose which Codex activity details Stats displays.",
+        section: "codexActivity",
+        enabled: sections.codexActivity,
+        choices: [
+          ("Section heading", "heading", sectionDisplay.codexActivity.heading),
+          ("Activity calendar", "calendar", sectionDisplay.codexActivity.calendar),
+          ("Usage overview", "overview", sectionDisplay.codexActivity.overview),
+          ("Daily activity", "dailyActivity", sectionDisplay.codexActivity.dailyActivity),
+        ]
+      ),
       AboutViewController(),
     ]
+    updateSectionControls()
 
     let sidebarController = NSViewController()
     let sidebar = NSVisualEffectView()
@@ -171,46 +239,62 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     showPane(at: 0)
   }
 
-  private func sectionsViewController(sections: SectionsConfig) -> NSViewController {
-    let controller = settingsPane()
-    let title = NSTextField(labelWithString: "Sections")
+  private func sectionViewController(
+    title titleText: String,
+    help helpText: String,
+    section: String,
+    enabled: Bool,
+    choices: [(String, String, Bool)]
+  ) -> NSViewController {
+    let controller = settingsPane(height: max(400, CGFloat(choices.count * 28 + 220)))
+    let title = NSTextField(labelWithString: titleText)
     title.font = .systemFont(ofSize: 22, weight: .semibold)
-    let help = NSTextField(
-      wrappingLabelWithString:
-        "Choose which sections Stats displays. Disabled data sections are not refreshed."
-    )
+    let help = NSTextField(wrappingLabelWithString: helpText)
     help.textColor = .secondaryLabelColor
-
-    let choices: [(String, String, Bool)] = [
-      ("Clocks", "clocks", sections.clocks),
-      ("System", "system", sections.system),
-      ("AI", "ai", sections.ai),
-      ("Amp Activity", "ampActivity", sections.ampActivity),
-      ("Codex Activity", "codexActivity", sections.codexActivity),
-    ]
-    let checkboxes = choices.map { label, identifier, enabled in
-      let checkbox = NSButton(
-        checkboxWithTitle: label,
-        target: self,
-        action: #selector(sectionChanged(_:))
+    let master = sectionCheckbox(
+      title: "Show \(titleText)",
+      identifier: "\(section).master",
+      enabled: enabled
+    )
+    let displayHeading = NSTextField(labelWithString: "Display")
+    displayHeading.font = .systemFont(ofSize: 13, weight: .semibold)
+    let checkboxes = choices.map { label, option, selected in
+      sectionCheckbox(
+        title: label,
+        identifier: "\(section).\(option)",
+        enabled: selected
       )
-      checkbox.identifier = NSUserInterfaceItemIdentifier(identifier)
-      checkbox.state = enabled ? .on : .off
-      return checkbox
     }
-    let sectionStack = NSStackView(views: checkboxes)
-    sectionStack.orientation = .vertical
-    sectionStack.alignment = .leading
-    sectionStack.spacing = 10
+    let displayStack = NSStackView(views: [displayHeading] + checkboxes)
+    displayStack.orientation = .vertical
+    displayStack.alignment = .leading
+    displayStack.spacing = 8
 
-    let stack = NSStackView(views: [title, help, sectionStack])
+    let stack = NSStackView(views: [title, help, master, displayStack])
     stack.orientation = .vertical
     stack.alignment = .leading
     stack.spacing = 10
     stack.setCustomSpacing(8, after: title)
     stack.setCustomSpacing(20, after: help)
+    stack.setCustomSpacing(20, after: master)
     install(stack, in: controller.view)
     return controller
+  }
+
+  private func sectionCheckbox(
+    title: String,
+    identifier: String,
+    enabled: Bool
+  ) -> NSButton {
+    let checkbox = NSButton(
+      checkboxWithTitle: title,
+      target: self,
+      action: #selector(sectionChanged(_:))
+    )
+    checkbox.identifier = NSUserInterfaceItemIdentifier(identifier)
+    checkbox.state = enabled ? .on : .off
+    sectionButtons[identifier] = checkbox
+    return checkbox
   }
 
   private func generalViewController(
@@ -219,7 +303,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     showsScrollbar: Bool,
     configPath: String
   ) -> NSViewController {
-    let controller = settingsPane()
+    let controller = settingsPane(height: 500)
     let title = NSTextField(labelWithString: "General")
     title.font = .systemFont(ofSize: 22, weight: .semibold)
     let subtitle = NSTextField(
@@ -310,8 +394,12 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     return controller
   }
 
-  private func clocksViewController(selectedClockChoices: [ClockChoice]) -> NSViewController {
-    let controller = settingsPane()
+  private func clocksViewController(
+    selectedClockChoices: [ClockChoice],
+    enabled: Bool,
+    display: ClocksDisplayConfig
+  ) -> NSViewController {
+    let controller = settingsPane(height: 620)
 
     let title = NSTextField(labelWithString: "Clocks")
     title.font = .systemFont(ofSize: 22, weight: .semibold)
@@ -320,6 +408,36 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
         "Type a city or time zone in any clock field, then choose a matching city."
     )
     help.textColor = .secondaryLabelColor
+    let master = sectionCheckbox(
+      title: "Show Clocks",
+      identifier: "clocks.master",
+      enabled: enabled
+    )
+    let displayHeading = NSTextField(labelWithString: "Display")
+    displayHeading.font = .systemFont(ofSize: 13, weight: .semibold)
+    let displayValues = [display.clock1, display.clock2, display.clock3, display.clock4]
+    let displayCheckboxes =
+      [
+        sectionCheckbox(
+          title: "Section heading",
+          identifier: "clocks.heading",
+          enabled: display.heading
+        )
+      ]
+      + (0..<4).map { slot in
+        sectionCheckbox(
+          title: "Clock \(slot + 1)",
+          identifier: "clocks.clock\(slot + 1)",
+          enabled: displayValues[slot]
+        )
+      }
+    let displayStack = NSStackView(views: [displayHeading] + displayCheckboxes)
+    displayStack.orientation = .vertical
+    displayStack.alignment = .leading
+    displayStack.spacing = 8
+
+    let clocksHeading = NSTextField(labelWithString: "Clock locations")
+    clocksHeading.font = .systemFont(ofSize: 13, weight: .semibold)
 
     var rows: [[NSView]] = []
     for slot in 0..<4 {
@@ -332,6 +450,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
       }
       popup.cell?.lineBreakMode = .byTruncatingTail
       popup.widthAnchor.constraint(equalToConstant: clockMenuWidth).isActive = true
+      clockPickers.append(popup)
       rows.append([label, popup])
     }
 
@@ -343,19 +462,21 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     grid.column(at: 1).xPlacement = .fill
     grid.column(at: 1).width = 360
 
-    let stack = NSStackView(views: [title, help, grid])
+    let stack = NSStackView(views: [title, help, master, displayStack, clocksHeading, grid])
     stack.orientation = .vertical
     stack.alignment = .leading
     stack.spacing = 10
     stack.setCustomSpacing(8, after: title)
     stack.setCustomSpacing(20, after: help)
+    stack.setCustomSpacing(20, after: master)
+    stack.setCustomSpacing(20, after: displayStack)
     install(stack, in: controller.view)
     return controller
   }
 
-  private func settingsPane() -> NSViewController {
+  private func settingsPane(height: CGFloat = 400) -> NSViewController {
     let controller = NSViewController()
-    controller.preferredContentSize = NSSize(width: 520, height: 400)
+    controller.preferredContentSize = NSSize(width: 520, height: height)
     controller.view = NSView(frame: NSRect(origin: .zero, size: controller.preferredContentSize))
     return controller
   }
@@ -463,20 +584,171 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
   }
 
   @objc private func sectionChanged(_ sender: NSButton) {
-    var updated = selectedSections
+    guard
+      let identifier = sender.identifier?.rawValue,
+      let separator = identifier.firstIndex(of: ".")
+    else { return }
+    let section = String(identifier[..<separator])
+    let option = String(identifier[identifier.index(after: separator)...])
     let enabled = sender.state == .on
-    switch sender.identifier?.rawValue {
-    case "clocks": updated.clocks = enabled
-    case "system": updated.system = enabled
-    case "ai": updated.ai = enabled
-    case "ampActivity": updated.ampActivity = enabled
-    case "codexActivity": updated.codexActivity = enabled
-    default: return
-    }
-    if onSectionsChange(updated) {
-      selectedSections = updated
+    var sections = selectedSections
+    var display = selectedSectionDisplay
+
+    if option == "master" {
+      if enabled && !hasEnabledOption(section, in: display) {
+        enableAllOptions(section, in: &display)
+      }
+      setSection(section, enabled: enabled, in: &sections)
     } else {
-      sender.state = enabled ? .off : .on
+      setDisplayOption(section, option: option, enabled: enabled, in: &display)
+      if !hasEnabledOption(section, in: display) {
+        setSection(section, enabled: false, in: &sections)
+      }
+    }
+
+    if onSectionSettingsChange(sections, display) {
+      selectedSections = sections
+      selectedSectionDisplay = display
+    }
+    updateSectionControls()
+  }
+
+  private func sectionEnabled(_ section: String, in sections: SectionsConfig) -> Bool {
+    switch section {
+    case "clocks": sections.clocks
+    case "system": sections.system
+    case "ai": sections.ai
+    case "ampActivity": sections.ampActivity
+    case "codexActivity": sections.codexActivity
+    default: false
+    }
+  }
+
+  private func setSection(_ section: String, enabled: Bool, in sections: inout SectionsConfig) {
+    switch section {
+    case "clocks": sections.clocks = enabled
+    case "system": sections.system = enabled
+    case "ai": sections.ai = enabled
+    case "ampActivity": sections.ampActivity = enabled
+    case "codexActivity": sections.codexActivity = enabled
+    default: break
+    }
+  }
+
+  private func hasEnabledOption(_ section: String, in display: SectionDisplayConfig) -> Bool {
+    switch section {
+    case "clocks": display.clocks.hasEnabledOption
+    case "system": display.system.hasEnabledOption
+    case "ai": display.ai.hasEnabledOption
+    case "ampActivity": display.ampActivity.hasEnabledOption
+    case "codexActivity": display.codexActivity.hasEnabledOption
+    default: false
+    }
+  }
+
+  private func enableAllOptions(_ section: String, in display: inout SectionDisplayConfig) {
+    switch section {
+    case "clocks": display.clocks = ClocksDisplayConfig()
+    case "system": display.system = SystemDisplayConfig()
+    case "ai": display.ai = AIDisplayConfig()
+    case "ampActivity": display.ampActivity = AmpActivityDisplayConfig()
+    case "codexActivity": display.codexActivity = CodexActivityDisplayConfig()
+    default: break
+    }
+  }
+
+  private func setDisplayOption(
+    _ section: String,
+    option: String,
+    enabled: Bool,
+    in display: inout SectionDisplayConfig
+  ) {
+    switch (section, option) {
+    case ("clocks", "heading"): display.clocks.heading = enabled
+    case ("clocks", "clock1"): display.clocks.clock1 = enabled
+    case ("clocks", "clock2"): display.clocks.clock2 = enabled
+    case ("clocks", "clock3"): display.clocks.clock3 = enabled
+    case ("clocks", "clock4"): display.clocks.clock4 = enabled
+    case ("system", "heading"): display.system.heading = enabled
+    case ("system", "cpu"): display.system.cpu = enabled
+    case ("system", "ram"): display.system.ram = enabled
+    case ("system", "gpu"): display.system.gpu = enabled
+    case ("system", "storage"): display.system.storage = enabled
+    case ("system", "network"): display.system.network = enabled
+    case ("ai", "heading"): display.ai.heading = enabled
+    case ("ai", "ampPlan"): display.ai.ampPlan = enabled
+    case ("ai", "ampOrbs"): display.ai.ampOrbs = enabled
+    case ("ai", "ampCredits"): display.ai.ampCredits = enabled
+    case ("ai", "codexQuota"): display.ai.codexQuota = enabled
+    case ("ampActivity", "heading"): display.ampActivity.heading = enabled
+    case ("ampActivity", "calendar"): display.ampActivity.calendar = enabled
+    case ("ampActivity", "dailyActivity"): display.ampActivity.dailyActivity = enabled
+    case ("ampActivity", "usageSummary"): display.ampActivity.usageSummary = enabled
+    case ("ampActivity", "models"): display.ampActivity.models = enabled
+    case ("ampActivity", "sources"): display.ampActivity.sources = enabled
+    case ("ampActivity", "syncAlerts"): display.ampActivity.syncAlerts = enabled
+    case ("codexActivity", "heading"): display.codexActivity.heading = enabled
+    case ("codexActivity", "calendar"): display.codexActivity.calendar = enabled
+    case ("codexActivity", "overview"): display.codexActivity.overview = enabled
+    case ("codexActivity", "dailyActivity"): display.codexActivity.dailyActivity = enabled
+    default: break
+    }
+  }
+
+  private func displayOptionEnabled(_ section: String, option: String) -> Bool {
+    switch (section, option) {
+    case ("clocks", "heading"): selectedSectionDisplay.clocks.heading
+    case ("clocks", "clock1"): selectedSectionDisplay.clocks.clock1
+    case ("clocks", "clock2"): selectedSectionDisplay.clocks.clock2
+    case ("clocks", "clock3"): selectedSectionDisplay.clocks.clock3
+    case ("clocks", "clock4"): selectedSectionDisplay.clocks.clock4
+    case ("system", "heading"): selectedSectionDisplay.system.heading
+    case ("system", "cpu"): selectedSectionDisplay.system.cpu
+    case ("system", "ram"): selectedSectionDisplay.system.ram
+    case ("system", "gpu"): selectedSectionDisplay.system.gpu
+    case ("system", "storage"): selectedSectionDisplay.system.storage
+    case ("system", "network"): selectedSectionDisplay.system.network
+    case ("ai", "heading"): selectedSectionDisplay.ai.heading
+    case ("ai", "ampPlan"): selectedSectionDisplay.ai.ampPlan
+    case ("ai", "ampOrbs"): selectedSectionDisplay.ai.ampOrbs
+    case ("ai", "ampCredits"): selectedSectionDisplay.ai.ampCredits
+    case ("ai", "codexQuota"): selectedSectionDisplay.ai.codexQuota
+    case ("ampActivity", "heading"): selectedSectionDisplay.ampActivity.heading
+    case ("ampActivity", "calendar"): selectedSectionDisplay.ampActivity.calendar
+    case ("ampActivity", "dailyActivity"): selectedSectionDisplay.ampActivity.dailyActivity
+    case ("ampActivity", "usageSummary"): selectedSectionDisplay.ampActivity.usageSummary
+    case ("ampActivity", "models"): selectedSectionDisplay.ampActivity.models
+    case ("ampActivity", "sources"): selectedSectionDisplay.ampActivity.sources
+    case ("ampActivity", "syncAlerts"): selectedSectionDisplay.ampActivity.syncAlerts
+    case ("codexActivity", "heading"): selectedSectionDisplay.codexActivity.heading
+    case ("codexActivity", "calendar"): selectedSectionDisplay.codexActivity.calendar
+    case ("codexActivity", "overview"): selectedSectionDisplay.codexActivity.overview
+    case ("codexActivity", "dailyActivity"): selectedSectionDisplay.codexActivity.dailyActivity
+    default: false
+    }
+  }
+
+  private func updateSectionControls() {
+    for (identifier, button) in sectionButtons {
+      guard let separator = identifier.firstIndex(of: ".") else { continue }
+      let section = String(identifier[..<separator])
+      let option = String(identifier[identifier.index(after: separator)...])
+      let masterEnabled = sectionEnabled(section, in: selectedSections)
+      button.state =
+        (option == "master" ? masterEnabled : displayOptionEnabled(section, option: option))
+        ? .on : .off
+      if option != "master" {
+        button.isEnabled = masterEnabled
+      }
+    }
+    let clockOptions = [
+      selectedSectionDisplay.clocks.clock1,
+      selectedSectionDisplay.clocks.clock2,
+      selectedSectionDisplay.clocks.clock3,
+      selectedSectionDisplay.clocks.clock4,
+    ]
+    for (picker, optionEnabled) in zip(clockPickers, clockOptions) {
+      picker.isEnabled = selectedSections.clocks && optionEnabled
     }
   }
 
