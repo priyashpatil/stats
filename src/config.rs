@@ -8,19 +8,84 @@ use serde::Deserialize;
 
 use crate::model::Clock;
 
-const CONFIG_VERSION: u64 = 1;
+const CONFIG_VERSION: u64 = 2;
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
 pub(crate) struct Config {
     pub(crate) version: u64,
     pub(crate) clocks: Vec<Clock>,
+    pub(crate) sections: SectionsConfig,
+    pub(crate) section_display: SectionDisplayConfig,
     pub(crate) refresh: RefreshConfig,
     pub(crate) desktop: DesktopConfig,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub(crate) struct SectionsConfig {
+    pub(crate) clocks: bool,
+    pub(crate) system: bool,
+    pub(crate) ai: bool,
+    pub(crate) amp_activity: bool,
+    pub(crate) codex_activity: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+pub(crate) struct SectionDisplayConfig {
+    pub(crate) clocks: ClocksDisplayConfig,
+    pub(crate) system: SystemDisplayConfig,
+    pub(crate) ai: AiDisplayConfig,
+    pub(crate) amp_activity: AmpActivityDisplayConfig,
+    pub(crate) codex_activity: CodexActivityDisplayConfig,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub(crate) struct ClocksDisplayConfig {
+    pub(crate) heading: bool,
+    pub(crate) clock_1: bool,
+    pub(crate) clock_2: bool,
+    pub(crate) clock_3: bool,
+    pub(crate) clock_4: bool,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub(crate) struct SystemDisplayConfig {
+    pub(crate) heading: bool,
+    pub(crate) cpu: bool,
+    pub(crate) ram: bool,
+    pub(crate) gpu: bool,
+    pub(crate) storage: bool,
+    pub(crate) network: bool,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub(crate) struct AiDisplayConfig {
+    pub(crate) heading: bool,
+    pub(crate) amp_plan: bool,
+    pub(crate) amp_orbs: bool,
+    pub(crate) amp_credits: bool,
+    pub(crate) codex_quota: bool,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub(crate) struct AmpActivityDisplayConfig {
+    pub(crate) heading: bool,
+    pub(crate) calendar: bool,
+    pub(crate) daily_activity: bool,
+    pub(crate) usage_summary: bool,
+    pub(crate) models: bool,
+    pub(crate) sources: bool,
+    pub(crate) sync_alerts: bool,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub(crate) struct CodexActivityDisplayConfig {
+    pub(crate) heading: bool,
+    pub(crate) calendar: bool,
+    pub(crate) overview: bool,
+    pub(crate) daily_activity: bool,
+}
+
 #[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
 pub(crate) struct RefreshConfig {
     pub(crate) codex_seconds: u64,
     pub(crate) amp_seconds: u64,
@@ -28,9 +93,9 @@ pub(crate) struct RefreshConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(default)]
 pub(crate) struct DesktopConfig {
     pub(crate) font_size: u64,
+    pub(crate) show_scrollbar: bool,
 }
 
 impl Default for Config {
@@ -38,9 +103,107 @@ impl Default for Config {
         Self {
             version: CONFIG_VERSION,
             clocks: default_clocks(),
+            sections: SectionsConfig::default(),
+            section_display: SectionDisplayConfig::default(),
             refresh: RefreshConfig::default(),
             desktop: DesktopConfig::default(),
         }
+    }
+}
+
+impl Default for SectionsConfig {
+    fn default() -> Self {
+        Self {
+            clocks: true,
+            system: true,
+            ai: true,
+            amp_activity: true,
+            codex_activity: true,
+        }
+    }
+}
+
+macro_rules! all_true_default {
+    ($type:ty { $($field:ident),+ $(,)? }) => {
+        impl Default for $type {
+            fn default() -> Self {
+                Self { $($field: true),+ }
+            }
+        }
+    };
+}
+
+all_true_default!(ClocksDisplayConfig {
+    heading,
+    clock_1,
+    clock_2,
+    clock_3,
+    clock_4
+});
+all_true_default!(SystemDisplayConfig {
+    heading,
+    cpu,
+    ram,
+    gpu,
+    storage,
+    network
+});
+all_true_default!(AiDisplayConfig {
+    heading,
+    amp_plan,
+    amp_orbs,
+    amp_credits,
+    codex_quota
+});
+all_true_default!(AmpActivityDisplayConfig {
+    heading,
+    calendar,
+    daily_activity,
+    usage_summary,
+    models,
+    sources,
+    sync_alerts
+});
+all_true_default!(CodexActivityDisplayConfig {
+    heading,
+    calendar,
+    overview,
+    daily_activity
+});
+
+impl SectionDisplayConfig {
+    pub(crate) fn system_needed(&self, sections: &SectionsConfig) -> bool {
+        sections.system
+            && (self.system.cpu
+                || self.system.ram
+                || self.system.gpu
+                || self.system.storage
+                || self.system.network)
+    }
+
+    pub(crate) fn amp_ai_needed(&self, sections: &SectionsConfig) -> bool {
+        sections.ai && (self.ai.amp_plan || self.ai.amp_orbs || self.ai.amp_credits)
+    }
+
+    pub(crate) fn codex_ai_needed(&self, sections: &SectionsConfig) -> bool {
+        sections.ai && self.ai.codex_quota
+    }
+
+    pub(crate) fn amp_activity_needed(&self, sections: &SectionsConfig) -> bool {
+        sections.amp_activity
+            && (self.amp_activity.calendar
+                || self.amp_activity.daily_activity
+                || self.amp_activity.usage_summary
+                || self.amp_activity.models
+                || self.amp_activity.sources
+                || self.amp_activity.sync_alerts)
+    }
+
+    pub(crate) fn codex_activity_needed(&self, sections: &SectionsConfig) -> bool {
+        sections.codex_activity
+            && (self.codex_activity.calendar
+                || self.codex_activity.overview
+                || self.codex_activity.daily_activity)
     }
 }
 
@@ -56,7 +219,10 @@ impl Default for RefreshConfig {
 
 impl Default for DesktopConfig {
     fn default() -> Self {
-        Self { font_size: 15 }
+        Self {
+            font_size: 15,
+            show_scrollbar: false,
+        }
     }
 }
 
@@ -96,6 +262,36 @@ fn validate(config: &Config) -> Result<(), String> {
         ));
     }
     validate_clocks(&config.clocks)?;
+    let requirements = [
+        (
+            config.sections.clocks,
+            config.section_display.clocks.any(),
+            "clocks",
+        ),
+        (
+            config.sections.system,
+            config.section_display.system.any(),
+            "system",
+        ),
+        (config.sections.ai, config.section_display.ai.any(), "ai"),
+        (
+            config.sections.amp_activity,
+            config.section_display.amp_activity.any(),
+            "amp_activity",
+        ),
+        (
+            config.sections.codex_activity,
+            config.section_display.codex_activity.any(),
+            "codex_activity",
+        ),
+    ];
+    for (enabled, any, section) in requirements {
+        if enabled && !any {
+            return Err(format!(
+                "sections.{section} requires at least one section_display.{section} option"
+            ));
+        }
+    }
     if config.refresh.codex_seconds < 5 {
         return Err("refresh.codex_seconds must be at least 5".into());
     }
@@ -110,6 +306,52 @@ fn validate(config: &Config) -> Result<(), String> {
     }
     Ok(())
 }
+
+macro_rules! any_enabled {
+    ($type:ty { $($field:ident),+ $(,)? }) => {
+        impl $type {
+            fn any(&self) -> bool { false $(|| self.$field)+ }
+        }
+    };
+}
+
+any_enabled!(ClocksDisplayConfig {
+    heading,
+    clock_1,
+    clock_2,
+    clock_3,
+    clock_4
+});
+any_enabled!(SystemDisplayConfig {
+    heading,
+    cpu,
+    ram,
+    gpu,
+    storage,
+    network
+});
+any_enabled!(AiDisplayConfig {
+    heading,
+    amp_plan,
+    amp_orbs,
+    amp_credits,
+    codex_quota
+});
+any_enabled!(AmpActivityDisplayConfig {
+    heading,
+    calendar,
+    daily_activity,
+    usage_summary,
+    models,
+    sources,
+    sync_alerts
+});
+any_enabled!(CodexActivityDisplayConfig {
+    heading,
+    calendar,
+    overview,
+    daily_activity
+});
 
 pub(crate) fn validate_clocks(clocks: &[Clock]) -> Result<(), String> {
     if clocks.len() != 4 {
@@ -169,9 +411,116 @@ mod tests {
     fn missing_file_uses_defaults() {
         let path = temporary_path("missing");
         let config = load(&path).unwrap();
-        assert_eq!(config.version, 1);
+        assert_eq!(config.version, 2);
         assert_eq!(config.clocks.len(), 4);
+        assert!(config.sections.amp_activity);
         assert_eq!(config.desktop.font_size, 15);
+        assert!(!config.desktop.show_scrollbar);
+    }
+
+    #[test]
+    fn rejects_version_one_config() {
+        let path = temporary_path("version-one");
+        write(&path, &valid_config().replace("version = 2", "version = 1"));
+
+        let error = load(&path).unwrap_err();
+
+        assert!(error.contains("unsupported version 1"));
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn rejects_missing_section_display_table() {
+        let path = temporary_path("missing-display-table");
+        write(
+            &path,
+            &valid_config().replace("[section_display.clocks]", "[removed_clocks]"),
+        );
+
+        let error = load(&path).unwrap_err();
+
+        assert!(error.contains("missing field `clocks`"));
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn rejects_missing_display_option() {
+        let path = temporary_path("missing-display-option");
+        write(&path, &valid_config().replace("clock_1 = true\n", ""));
+
+        let error = load(&path).unwrap_err();
+
+        assert!(error.contains("missing field `clock_1`"));
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn enabled_section_requires_a_display_option() {
+        let path = temporary_path("empty-enabled-section");
+        write(&path, &empty_system_config(true));
+
+        let error = load(&path).unwrap_err();
+
+        assert!(
+            error.contains("sections.system requires at least one section_display.system option")
+        );
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn disabled_section_allows_no_display_options() {
+        let path = temporary_path("empty-disabled-section");
+        write(&path, &empty_system_config(false));
+
+        let config = load(&path).unwrap();
+
+        assert!(!config.sections.system);
+        assert!(!config.section_display.system.any());
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn provider_demand_ignores_heading_only_sections() {
+        let sections = SectionsConfig::default();
+        let display = SectionDisplayConfig {
+            system: SystemDisplayConfig {
+                heading: true,
+                cpu: false,
+                ram: false,
+                gpu: false,
+                storage: false,
+                network: false,
+            },
+            ai: AiDisplayConfig {
+                heading: true,
+                amp_plan: false,
+                amp_orbs: false,
+                amp_credits: false,
+                codex_quota: false,
+            },
+            amp_activity: AmpActivityDisplayConfig {
+                heading: true,
+                calendar: false,
+                daily_activity: false,
+                usage_summary: false,
+                models: false,
+                sources: false,
+                sync_alerts: false,
+            },
+            codex_activity: CodexActivityDisplayConfig {
+                heading: true,
+                calendar: false,
+                overview: false,
+                daily_activity: false,
+            },
+            ..SectionDisplayConfig::default()
+        };
+
+        assert!(!display.system_needed(&sections));
+        assert!(!display.amp_ai_needed(&sections));
+        assert!(!display.codex_ai_needed(&sections));
+        assert!(!display.amp_activity_needed(&sections));
+        assert!(!display.codex_activity_needed(&sections));
     }
 
     #[test]
@@ -179,36 +528,26 @@ mod tests {
         let path = temporary_path("valid");
         write(
             &path,
-            r#"
-version = 1
-
-[[clocks]]
-label = "London"
-timezone = "Europe/London"
-[[clocks]]
-label = "New York"
-timezone = "America/New_York"
-[[clocks]]
-label = "Tokyo"
-timezone = "Asia/Tokyo"
-[[clocks]]
-label = "Sydney"
-timezone = "Australia/Sydney"
-
-[refresh]
-codex_seconds = 10
-amp_seconds = 120
-storage_seconds = 180
-
-[desktop]
-font_size = 18
-"#,
+            &valid_config()
+                .replace("label = \"Mumbai\"", "label = \"London\"")
+                .replace("clocks = true", "clocks = false")
+                .replace("ai = true", "ai = false")
+                .replace("amp_activity = true", "amp_activity = false")
+                .replace("codex_seconds = 60", "codex_seconds = 10")
+                .replace("amp_seconds = 300", "amp_seconds = 120")
+                .replace("storage_seconds = 300", "storage_seconds = 180")
+                .replace("font_size = 15", "font_size = 18"),
         );
 
         let config = load(&path).unwrap();
         assert_eq!(config.clocks[0].label, "London");
+        assert!(!config.sections.clocks);
+        assert!(!config.sections.ai);
+        assert!(!config.sections.amp_activity);
+        assert!(config.sections.codex_activity);
         assert_eq!(config.refresh.codex_seconds, 10);
         assert_eq!(config.desktop.font_size, 18);
+        assert!(!config.desktop.show_scrollbar);
         fs::remove_file(path).unwrap();
     }
 
@@ -227,9 +566,9 @@ font_size = 18
     #[test]
     fn rejects_unsupported_version() {
         let path = temporary_path("version");
-        write(&path, &valid_config().replace("version = 1", "version = 2"));
+        write(&path, &valid_config().replace("version = 2", "version = 3"));
         let error = load(&path).unwrap_err();
-        assert!(error.contains("unsupported version 2"));
+        assert!(error.contains("unsupported version 3"));
         fs::remove_file(path).unwrap();
     }
 
@@ -246,7 +585,7 @@ font_size = 18
     }
 
     fn valid_config() -> String {
-        r#"version = 1
+        r#"version = 2
 
 [[clocks]]
 label = "Mumbai"
@@ -260,7 +599,69 @@ timezone = "Australia/Sydney"
 [[clocks]]
 label = "Seattle"
 timezone = "America/Los_Angeles"
+
+[sections]
+clocks = true
+system = true
+ai = true
+amp_activity = true
+codex_activity = true
+
+[section_display.clocks]
+heading = true
+clock_1 = true
+clock_2 = true
+clock_3 = true
+clock_4 = true
+
+[section_display.system]
+heading = true
+cpu = true
+ram = true
+gpu = true
+storage = true
+network = true
+
+[section_display.ai]
+heading = true
+amp_plan = true
+amp_orbs = true
+amp_credits = true
+codex_quota = true
+
+[section_display.amp_activity]
+heading = true
+calendar = true
+daily_activity = true
+usage_summary = true
+models = true
+sources = true
+sync_alerts = true
+
+[section_display.codex_activity]
+heading = true
+calendar = true
+overview = true
+daily_activity = true
+
+[refresh]
+codex_seconds = 60
+amp_seconds = 300
+storage_seconds = 300
+
+[desktop]
+font_size = 15
+show_scrollbar = false
 "#
         .into()
+    }
+
+    fn empty_system_config(enabled: bool) -> String {
+        valid_config()
+            .replace("system = true", &format!("system = {enabled}"))
+            .replace(
+                "[section_display.system]\nheading = true\ncpu = true\nram = true\ngpu = true\nstorage = true\nnetwork = true",
+                "[section_display.system]\nheading = false\ncpu = false\nram = false\ngpu = false\nstorage = false\nnetwork = false",
+            )
     }
 }

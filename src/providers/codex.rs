@@ -73,13 +73,26 @@ pub(crate) fn spawn_codex_client(
     stop: &Arc<AtomicBool>,
     port: u16,
     interval: u64,
+    rate_limits_enabled: bool,
+    activity_enabled: bool,
 ) {
     let state = Arc::clone(state);
     let stop = Arc::clone(stop);
     thread::spawn(move || {
-        if let Err(err) = codex_client(&state, &stop, port, interval) {
-            load_cached_codex(&state, err.clone());
-            load_cached_codex_activity(&state, err);
+        if let Err(err) = codex_client(
+            &state,
+            &stop,
+            port,
+            interval,
+            rate_limits_enabled,
+            activity_enabled,
+        ) {
+            if rate_limits_enabled {
+                load_cached_codex(&state, err.clone());
+            }
+            if activity_enabled {
+                load_cached_codex_activity(&state, err);
+            }
         }
     });
 }
@@ -89,6 +102,8 @@ fn codex_client(
     stop: &Arc<AtomicBool>,
     port: u16,
     interval: u64,
+    rate_limits_enabled: bool,
+    activity_enabled: bool,
 ) -> Result<(), String> {
     let url = format!("ws://127.0.0.1:{port}");
     let stream = TcpStream::connect(("127.0.0.1", port)).map_err(|err| err.to_string())?;
@@ -114,7 +129,11 @@ fn codex_client(
     let mut next_activity_refresh_at = Instant::now();
 
     while !stop.load(Ordering::Relaxed) {
-        if initialized && pending_rate_id.is_none() && Instant::now() >= next_rate_refresh_at {
+        if rate_limits_enabled
+            && initialized
+            && pending_rate_id.is_none()
+            && Instant::now() >= next_rate_refresh_at
+        {
             pending_rate_id = Some(send_ws(
                 &mut ws,
                 &mut next_id,
@@ -122,7 +141,8 @@ fn codex_client(
                 None,
             )?);
         }
-        if initialized
+        if activity_enabled
+            && initialized
             && pending_activity_id.is_none()
             && Instant::now() >= next_activity_refresh_at
         {
@@ -150,8 +170,8 @@ fn codex_client(
             }
             initialized = true;
             let mut guard = state.lock().unwrap();
-            guard.codex.ready = true;
-            guard.codex_activity.ready = true;
+            guard.codex.ready = rate_limits_enabled;
+            guard.codex_activity.ready = activity_enabled;
             next_rate_refresh_at = Instant::now();
             next_activity_refresh_at = Instant::now();
             continue;

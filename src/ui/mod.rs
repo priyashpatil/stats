@@ -1,21 +1,25 @@
-use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+use std::{env, io};
+use std::{fs, path::Path, time::SystemTime};
 
 use chrono::{DateTime, Local, NaiveDate, TimeZone, Utc};
 use chrono_tz::Tz;
 use crossterm::cursor::{Hide, MoveTo, Show};
-use crossterm::event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode};
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, MouseEventKind,
+};
 use crossterm::execute;
 use crossterm::terminal::{
-    Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+    Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen, SetTitle, disable_raw_mode,
+    enable_raw_mode,
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
 use ratatui::{Frame, Terminal};
 use serde_json::Value;
 
@@ -29,7 +33,6 @@ struct AiQuotaRow {
     label: String,
     percent_left: f64,
     reset: Option<String>,
-    suffix: Option<String>,
 }
 
 fn equal_column_widths(width: usize, count: usize) -> Vec<usize> {
@@ -40,17 +43,29 @@ fn equal_column_widths(width: usize, count: usize) -> Vec<usize> {
         .collect()
 }
 
-use crate::model::{AmpUsage, AppState, Clock, CodexActivityUsage, ProviderState, SystemMetrics};
+use crate::model::{
+    AmpActivityUsage, AmpUsage, AppState, Clock, CodexActivityUsage, ProviderState, SystemMetrics,
+};
 use crate::providers::codex::{codex_weekly_window, left_percent, ordered_buckets};
 
 mod activity;
-use activity::render_codex_activity;
+use crate::config::{
+    AiDisplayConfig, ClocksDisplayConfig, SectionDisplayConfig, SectionsConfig, SystemDisplayConfig,
+};
+use activity::{
+    amp_activity_history_days, amp_activity_sync_message, render_amp_activity,
+    render_codex_activity,
+};
 
 pub(crate) fn run_tui(
     state: &Arc<Mutex<AppState>>,
     stop: &Arc<AtomicBool>,
     clocks: &[Clock],
-) -> Result<(), String> {
+    sections: &SectionsConfig,
+    section_display: &SectionDisplayConfig,
+    show_scrollbar: bool,
+    config_path: &Path,
+) -> Result<bool, String> {
     enable_raw_mode().map_err(|err| err.to_string())?;
     let mut stdout = io::stdout();
     execute!(
@@ -65,22 +80,78 @@ pub(crate) fn run_tui(
     .map_err(|err| err.to_string())?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend).map_err(|err| err.to_string())?;
+    let reports_desktop_layout = env::var_os("STATS_DESKTOP_LAYOUT").is_some();
+    let mut reported_rows = None;
+    let mut scroll_offset = 0;
+    let mut max_scroll = 0;
+    let mut page_rows = 1;
+    let initial_config_revision = config_revision(config_path);
     let result = loop {
+        let mut content_rows = 0;
         terminal
-            .draw(|frame| draw(frame, state, clocks))
+            .draw(|frame| {
+                (content_rows, max_scroll, page_rows) = draw(
+                    frame,
+                    state,
+                    clocks,
+                    sections,
+                    section_display,
+                    show_scrollbar,
+                    &mut scroll_offset,
+                )
+            })
             .map_err(|err| err.to_string())?;
-        if event::poll(Duration::from_millis(200)).map_err(|err| err.to_string())?
-            && let Event::Key(key) = event::read().map_err(|err| err.to_string())?
-            && matches!(
-                key.code,
-                KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc
+        let content_rows = content_rows.max(1);
+        if reports_desktop_layout && reported_rows != Some(content_rows) {
+            execute!(
+                terminal.backend_mut(),
+                SetTitle(format!("stats-layout:{content_rows}"))
             )
-        {
-            stop.store(true, Ordering::Relaxed);
-            break Ok(());
+            .map_err(|err| err.to_string())?;
+            reported_rows = Some(content_rows);
+        }
+        if event::poll(Duration::from_millis(200)).map_err(|err| err.to_string())? {
+            match event::read().map_err(|err| err.to_string())? {
+                Event::Key(key)
+                    if matches!(
+                        key.code,
+                        KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc
+                    ) =>
+                {
+                    stop.store(true, Ordering::Relaxed);
+                    break Ok(false);
+                }
+                Event::Key(key) => match key.code {
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        scroll_offset = (scroll_offset + 1).min(max_scroll)
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        scroll_offset = scroll_offset.saturating_sub(1)
+                    }
+                    KeyCode::PageDown => {
+                        scroll_offset = (scroll_offset + page_rows).min(max_scroll)
+                    }
+                    KeyCode::PageUp => scroll_offset = scroll_offset.saturating_sub(page_rows),
+                    KeyCode::Home => scroll_offset = 0,
+                    KeyCode::End => scroll_offset = max_scroll,
+                    _ => {}
+                },
+                Event::Mouse(mouse) => match mouse.kind {
+                    MouseEventKind::ScrollDown => {
+                        scroll_offset = (scroll_offset + 3).min(max_scroll)
+                    }
+                    MouseEventKind::ScrollUp => scroll_offset = scroll_offset.saturating_sub(3),
+                    _ => {}
+                },
+                _ => {}
+            }
         }
         if stop.load(Ordering::Relaxed) {
-            break Ok(());
+            break Ok(false);
+        }
+        if config_revision(config_path) != initial_config_revision {
+            stop.store(true, Ordering::Relaxed);
+            break Ok(true);
         }
     };
     disable_raw_mode().map_err(|err| err.to_string())?;
@@ -95,34 +166,145 @@ pub(crate) fn run_tui(
     result
 }
 
-fn draw(frame: &mut Frame, state: &Arc<Mutex<AppState>>, clocks: &[Clock]) {
-    let area = frame.area();
-    let snapshot = state.lock().unwrap().clone();
-    let lines = stats_lines(&snapshot, clocks, area.width as usize);
-    let paragraph = Paragraph::new(Text::from(lines));
-    frame.render_widget(paragraph, area);
+fn config_revision(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
 }
 
-fn stats_lines(state: &AppState, clocks: &[Clock], width: usize) -> Vec<Line<'static>> {
+fn draw(
+    frame: &mut Frame,
+    state: &Arc<Mutex<AppState>>,
+    clocks: &[Clock],
+    sections: &SectionsConfig,
+    section_display: &SectionDisplayConfig,
+    show_scrollbar: bool,
+    scroll_offset: &mut usize,
+) -> (usize, usize, usize) {
+    let area = frame.area();
+    let mut content_area = area;
+    if show_scrollbar {
+        content_area.width = content_area.width.saturating_sub(2);
+    }
+    let snapshot = {
+        let mut state = state.lock().unwrap();
+        if sections.amp_activity {
+            state.amp_activity_history_days =
+                amp_activity_history_days(content_area.width as usize, Utc::now().date_naive());
+        }
+        state.clone()
+    };
+    let lines = stats_lines(
+        &snapshot,
+        clocks,
+        sections,
+        section_display,
+        content_area.width as usize,
+    );
+    let content_rows = lines.len();
+    let page_rows = area.height as usize;
+    let max_scroll = content_rows.saturating_sub(page_rows);
+    *scroll_offset = (*scroll_offset).min(max_scroll);
+    let paragraph = Paragraph::new(Text::from(lines)).scroll((*scroll_offset as u16, 0));
+    frame.render_widget(paragraph, content_area);
+    if show_scrollbar && max_scroll > 0 {
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(None)
+            .end_symbol(None)
+            .track_symbol(Some("│"))
+            .track_style(Style::default().fg(Color::DarkGray))
+            .thumb_symbol("┃")
+            .thumb_style(Style::default().fg(Color::Gray));
+        let mut scrollbar_state = ScrollbarState::new(content_rows)
+            .position(*scroll_offset)
+            .viewport_content_length(page_rows);
+        frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+    }
+    (content_rows, max_scroll, page_rows.saturating_sub(1).max(1))
+}
+
+fn stats_lines(
+    state: &AppState,
+    clocks: &[Clock],
+    sections: &SectionsConfig,
+    display: &SectionDisplayConfig,
+    width: usize,
+) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    render_clocks(&mut lines, clocks, width);
-    render_system(&mut lines, &state.system, width);
-    render_ai(
+    if sections.amp_activity && display.amp_activity.sync_alerts {
+        render_alerts(&mut lines, state, width, Utc::now().date_naive());
+    }
+    if sections.clocks {
+        render_clocks(&mut lines, clocks, &display.clocks, width);
+    }
+    if sections.system {
+        render_system(&mut lines, &state.system, &display.system, width);
+    }
+    if sections.ai {
+        render_ai_quotas(&mut lines, &state.amp, &state.codex, &display.ai, width);
+    }
+    render_activity_sections(
         &mut lines,
-        &state.amp,
-        &state.codex,
+        &state.amp_activity,
         &state.codex_activity,
+        sections,
+        display,
         width,
+        Utc::now().date_naive(),
     );
     lines
 }
 
-fn render_clocks(lines: &mut Vec<Line<'static>>, clocks: &[Clock], width: usize) {
+fn render_alerts(lines: &mut Vec<Line<'static>>, state: &AppState, width: usize, today: NaiveDate) {
+    let alerts = amp_activity_sync_message(&state.amp_activity, width, today)
+        .map(|message| (message, Color::Yellow))
+        .into_iter()
+        .collect::<Vec<_>>();
+    if alerts.is_empty() {
+        return;
+    }
+    section(lines, "Alerts", "", width);
+    lines.push(Line::default());
+    for (message, color) in alerts {
+        lines.extend(wrapped_alert_rows(&message, color, width));
+    }
+    lines.push(Line::default());
+}
+
+fn render_clocks(
+    lines: &mut Vec<Line<'static>>,
+    clocks: &[Clock],
+    display: &ClocksDisplayConfig,
+    width: usize,
+) {
+    let enabled = [
+        display.clock_1,
+        display.clock_2,
+        display.clock_3,
+        display.clock_4,
+    ];
+    let clocks = clocks
+        .iter()
+        .zip(enabled)
+        .filter_map(|(clock, enabled)| enabled.then_some(clock))
+        .collect::<Vec<_>>();
+    if display.heading {
+        section(lines, "Clocks", "", width);
+    }
+    if clocks.is_empty() {
+        if display.heading {
+            lines.push(Line::default());
+        }
+        return;
+    }
     let gap = if width >= 72 { 4 } else { 2 };
     let card_widths =
         equal_column_widths(width.saturating_sub(gap * (clocks.len() - 1)), clocks.len());
     if card_widths.contains(&0) {
         return;
+    }
+    if display.heading {
+        lines.push(Line::default());
     }
     let mut city_spans = Vec::new();
     let mut time_spans = Vec::new();
@@ -154,124 +336,255 @@ fn render_clocks(lines: &mut Vec<Line<'static>>, clocks: &[Clock], width: usize)
     lines.push(Line::default());
 }
 
-fn render_system(lines: &mut Vec<Line<'static>>, system: &SystemMetrics, width: usize) {
-    let mut rows = vec![
-        metric_row("CPU", system.cpu_percent, "used", true, width),
-        metric_row("RAM", Some(system.ram_percent), "used", true, width),
-        metric_row("GPU", system.gpu_percent, "used", true, width),
-    ];
-    let used_percent = (100.0 - system.storage_percent_free).clamp(0.0, 100.0);
-    let color = color_for_usage(used_percent);
-    let mut storage = vec![dim(fixed("Storage", 8))];
-    let storage_value = format!("{:>3}% free", system.storage_percent_free.round() as i64);
-    storage.extend(bar_spans(
-        used_percent,
-        metric_bar_width(width, 8, storage_value.chars().count()),
-        color,
-    ));
-    storage.extend([
-        Span::raw("  "),
-        span(
-            storage_value,
-            color_for_remaining(system.storage_percent_free),
+fn render_system(
+    lines: &mut Vec<Line<'static>>,
+    system: &SystemMetrics,
+    display: &SystemDisplayConfig,
+    width: usize,
+) {
+    let mut rows = Vec::new();
+    if display.cpu {
+        rows.push(metric_row("CPU", system.cpu_percent, "used", true, width));
+    }
+    if display.ram {
+        rows.push(metric_row(
+            "RAM",
+            Some(system.ram_percent),
+            "used",
             true,
-        ),
-    ]);
-    rows.push(Line::from(storage));
-    rows.push(Line::from(vec![
-        dim(fixed("Network", 8)),
-        span(
-            format!("↓ {}", rate_label(system.net_down_rate)),
-            Color::Green,
-            true,
-        ),
-        Span::raw("  "),
-        span(
-            format!("↑ {}", rate_label(system.net_up_rate)),
-            Color::Green,
-            true,
-        ),
-    ]));
-    section(lines, "System", "", width);
-    lines.push(Line::default());
+            width,
+        ));
+    }
+    if display.gpu {
+        rows.push(metric_row("GPU", system.gpu_percent, "used", true, width));
+    }
+    if display.storage {
+        let used_percent = (100.0 - system.storage_percent_free).clamp(0.0, 100.0);
+        let color = color_for_usage(used_percent);
+        let mut storage = vec![dim(fixed("Storage", 8))];
+        let storage_value = format!("{:>3}% free", system.storage_percent_free.round() as i64);
+        storage.extend(bar_spans(
+            used_percent,
+            metric_bar_width(width, 8, storage_value.chars().count()),
+            color,
+        ));
+        storage.extend([
+            Span::raw("  "),
+            span(
+                storage_value,
+                color_for_remaining(system.storage_percent_free),
+                true,
+            ),
+        ]);
+        rows.push(Line::from(storage));
+    }
+    if display.network {
+        rows.push(Line::from(vec![
+            dim(fixed("Network", 8)),
+            span(
+                format!("↓ {}", rate_label(system.net_down_rate)),
+                Color::Green,
+                true,
+            ),
+            Span::raw("  "),
+            span(
+                format!("↑ {}", rate_label(system.net_up_rate)),
+                Color::Green,
+                true,
+            ),
+        ]));
+    }
+    if display.heading {
+        section(lines, "System", "", width);
+    }
+    if display.heading && !rows.is_empty() {
+        lines.push(Line::default());
+    }
     lines.extend(rows);
     lines.push(Line::default());
 }
 
-fn render_ai(
+fn render_ai_quotas(
     lines: &mut Vec<Line<'static>>,
     amp: &ProviderState<AmpUsage>,
     codex: &ProviderState<Value>,
-    codex_activity: &ProviderState<CodexActivityUsage>,
+    display: &AiDisplayConfig,
     width: usize,
 ) {
-    render_ai_at(
-        lines,
-        amp,
-        codex,
-        codex_activity,
-        width,
-        Utc::now().date_naive(),
-    );
+    if display.heading {
+        section(lines, "AI", "", width);
+    }
+
+    let mut rows = Vec::new();
+    let mut statuses = Vec::new();
+    let mut details = Vec::new();
+    if display.amp_plan || display.amp_orbs || display.amp_credits {
+        collect_amp_ai_rows(&mut rows, &mut statuses, &mut details, amp, display);
+    }
+    if display.codex_quota {
+        collect_codex_ai_rows(&mut rows, &mut statuses, codex);
+    }
+
+    if display.heading && (!rows.is_empty() || !statuses.is_empty() || !details.is_empty()) {
+        lines.push(Line::default());
+    }
+    lines.extend(statuses);
+    if !rows.is_empty() {
+        render_ai_quota_rows(lines, rows, width);
+    }
+    lines.extend(details);
+    lines.push(Line::default());
 }
 
+#[cfg(test)]
 fn render_ai_at(
     lines: &mut Vec<Line<'static>>,
     amp: &ProviderState<AmpUsage>,
+    amp_activity: &ProviderState<AmpActivityUsage>,
     codex: &ProviderState<Value>,
     codex_activity: &ProviderState<CodexActivityUsage>,
     width: usize,
     today: NaiveDate,
 ) {
-    section(lines, "AI", "", width);
-    lines.push(Line::default());
+    let display = SectionDisplayConfig::default();
+    render_ai_quotas(lines, amp, codex, &display.ai, width);
+    render_activity_sections(
+        lines,
+        amp_activity,
+        codex_activity,
+        &SectionsConfig::default(),
+        &display,
+        width,
+        today,
+    );
+}
 
-    let mut rows = Vec::new();
-    let mut statuses = Vec::new();
-    collect_amp_ai_rows(&mut rows, &mut statuses, amp);
-    collect_codex_ai_rows(&mut rows, &mut statuses, codex);
-
-    for status in statuses {
-        lines.push(status);
+fn render_activity_sections(
+    lines: &mut Vec<Line<'static>>,
+    amp: &ProviderState<AmpActivityUsage>,
+    codex: &ProviderState<CodexActivityUsage>,
+    sections: &SectionsConfig,
+    display: &SectionDisplayConfig,
+    width: usize,
+    today: NaiveDate,
+) {
+    let amp_display = &display.amp_activity;
+    if sections.amp_activity {
+        if amp_display.heading {
+            section(lines, "Amp Activity", "", width);
+        }
+        let has_data = amp_display.calendar
+            || amp_display.daily_activity
+            || amp_display.usage_summary
+            || amp_display.models
+            || amp_display.sources;
+        if amp_display.heading && has_data {
+            lines.push(Line::default());
+        }
+        if has_data {
+            render_amp_activity(lines, amp, width, today, amp_display);
+        }
+        if amp_display.heading || has_data {
+            lines.push(Line::default());
+        }
     }
-
-    if !rows.is_empty() {
-        render_ai_quota_rows(lines, rows, width);
+    let codex_display = &display.codex_activity;
+    if sections.codex_activity {
+        if codex_display.heading {
+            section(lines, "Codex Activity", "", width);
+        }
+        let has_data =
+            codex_display.calendar || codex_display.overview || codex_display.daily_activity;
+        if codex_display.heading && has_data {
+            lines.push(Line::default());
+        }
+        if has_data {
+            render_codex_activity(lines, codex, width, today, codex_display);
+        }
+        if codex_display.heading || has_data {
+            lines.push(Line::default());
+        }
     }
-    lines.push(Line::default());
-    render_codex_activity(lines, codex_activity, width, today);
+}
 
-    lines.push(Line::default());
+fn wrapped_alert_rows(message: &str, color: Color, width: usize) -> Vec<Line<'static>> {
+    let content_width = width.max(1);
+    let mut wrapped = Vec::new();
+    let mut current = String::new();
+    for word in message.split_whitespace() {
+        let next_len =
+            current.chars().count() + usize::from(!current.is_empty()) + word.chars().count();
+        if !current.is_empty() && next_len > content_width {
+            wrapped.push(current);
+            current = String::new();
+        }
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(word);
+    }
+    if !current.is_empty() {
+        wrapped.push(current);
+    }
+    wrapped
+        .into_iter()
+        .map(|content| Line::from(span(content, color, true)))
+        .collect()
 }
 
 fn collect_amp_ai_rows(
     rows: &mut Vec<AiQuotaRow>,
     statuses: &mut Vec<Line<'static>>,
+    details: &mut Vec<Line<'static>>,
     amp: &ProviderState<AmpUsage>,
+    display: &AiDisplayConfig,
 ) {
     if let Some(error) = &amp.error {
-        statuses.push(ai_status_row(
-            "Megawatt",
-            format!("Error: {error}"),
-            Color::Red,
-        ));
+        statuses.push(ai_status_row("Amp", format!("Error: {error}"), Color::Red));
         return;
     }
     let Some(result) = &amp.result else {
-        statuses.push(ai_status_row(
-            "Megawatt",
-            "Loading Amp usage...",
-            Color::Yellow,
-        ));
+        statuses.push(ai_status_row("Amp", "Loading Amp usage...", Color::Yellow));
         return;
     };
-    if let Some(percent_left) = result.other_percent_remaining {
+    if amp.stale {
+        let updated = amp
+            .updated_at
+            .as_ref()
+            .map(|time| time.format("%-d %b, %-I:%M%P").to_string())
+            .unwrap_or_else(|| "unknown".into());
+        statuses.push(ai_status_row(
+            "Amp",
+            format!("Last updated {updated}"),
+            Color::Yellow,
+        ));
+    }
+    if display.amp_plan
+        && let Some(percent_left) = result.other_percent_remaining
+    {
         rows.push(AiQuotaRow {
-            label: result.plan.clone().unwrap_or_else(|| "Megawatt".into()),
+            label: result.plan.clone().unwrap_or_else(|| "Amp".into()),
             percent_left,
             reset: result.reset.as_deref().map(amp_compact_reset_label),
-            suffix: None,
         });
+    }
+    if display.amp_orbs
+        && let Some(percent_left) = result.orb_percent_remaining
+    {
+        rows.push(AiQuotaRow {
+            label: "Amp Orbs".into(),
+            percent_left,
+            reset: result.reset.as_deref().map(amp_compact_reset_label),
+        });
+    }
+    if display.amp_credits
+        && let Some(credits) = &result.individual_credits_remaining
+    {
+        details.push(ai_status_row(
+            "Credits",
+            format!("{credits} remaining"),
+            Color::Green,
+        ));
     }
 }
 
@@ -337,7 +650,6 @@ fn collect_codex_ai_rows(
                 label: "Codex Pro".into(),
                 percent_left: left_percent(window),
                 reset: Some(codex_compact_reset_label(window)),
-                suffix: None,
             });
         }
     }
@@ -403,11 +715,7 @@ fn render_ai_quota_rows(lines: &mut Vec<Line<'static>>, rows: Vec<AiQuotaRow>, w
 }
 
 fn ai_quota_tail(row: &AiQuotaRow) -> String {
-    [row.suffix.as_deref(), row.reset.as_deref()]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join(" · ")
+    row.reset.clone().unwrap_or_default()
 }
 
 fn ai_status_row(label: &str, message: impl Into<String>, color: Color) -> Line<'static> {
@@ -417,7 +725,7 @@ fn ai_status_row(label: &str, message: impl Into<String>, color: Color) -> Line<
     ])
 }
 
-fn section(lines: &mut Vec<Line<'static>>, title: &str, meta: &str, width: usize) {
+pub(super) fn section(lines: &mut Vec<Line<'static>>, title: &str, meta: &str, width: usize) {
     let heading = title.to_uppercase();
     let mut spans = vec![span(heading.clone(), Color::Cyan, true)];
     let mut used = heading.len();
@@ -567,14 +875,19 @@ fn dim<T: Into<String>>(value: T) -> Span<'static> {
     )
 }
 
-pub(crate) fn print_once(state: &Arc<Mutex<AppState>>) {
+pub(crate) fn print_once(
+    state: &Arc<Mutex<AppState>>,
+    sections: &SectionsConfig,
+    display: &SectionDisplayConfig,
+) {
     let started_at = Local::now();
     let deadline = Instant::now() + Duration::from_secs(25);
     while Instant::now() < deadline {
         let ready = {
             let state = state.lock().unwrap();
-            provider_ready_for_once(&state.amp, &started_at)
-                && provider_ready_for_once(&state.codex, &started_at)
+            (!display.amp_ai_needed(sections) || provider_ready_for_once(&state.amp, &started_at))
+                && (!display.codex_ai_needed(sections)
+                    || provider_ready_for_once(&state.codex, &started_at))
         };
         if ready {
             break;
@@ -584,59 +897,115 @@ pub(crate) fn print_once(state: &Arc<Mutex<AppState>>) {
 
     let state = state.lock().unwrap().clone();
     println!("Stats");
-    let gpu = state
-        .system
-        .gpu_percent
-        .map(|value| format!("{value:.0}%"))
-        .unwrap_or_else(|| "sampling".into());
-    println!(
-        "CPU {:.0}% RAM {:.0}% GPU {gpu}",
-        state.system.cpu_percent.unwrap_or_default(),
-        state.system.ram_percent
-    );
-    println!(
-        "Network down {} up {}",
-        rate_label(state.system.net_down_rate),
-        rate_label(state.system.net_up_rate)
-    );
-    println!("Storage {:.0}% free", state.system.storage_percent_free);
-    if let Some(error) = &state.amp.error {
-        println!("Amp error: {error}");
-    } else if let Some(amp) = &state.amp.result
-        && let Some(percent) = amp.other_percent_remaining
-    {
-        let reset = amp
-            .reset
-            .as_deref()
-            .map(amp_compact_reset_label)
-            .map(|reset| format!(" {reset}"))
-            .unwrap_or_default();
-        println!(
-            "{} {:.0}% left{reset}",
-            amp.plan.as_deref().unwrap_or("Megawatt"),
-            percent
-        );
+    if display.system_needed(sections) {
+        let gpu = state
+            .system
+            .gpu_percent
+            .map(|value| format!("{value:.0}%"))
+            .unwrap_or_else(|| "sampling".into());
+        if display.system.cpu || display.system.ram || display.system.gpu {
+            let mut metrics = Vec::new();
+            if display.system.cpu {
+                metrics.push(format!(
+                    "CPU {:.0}%",
+                    state.system.cpu_percent.unwrap_or_default()
+                ));
+            }
+            if display.system.ram {
+                metrics.push(format!("RAM {:.0}%", state.system.ram_percent));
+            }
+            if display.system.gpu {
+                metrics.push(format!("GPU {gpu}"));
+            }
+            println!("{}", metrics.join(" "));
+        }
+        if display.system.network {
+            println!(
+                "Network down {} up {}",
+                rate_label(state.system.net_down_rate),
+                rate_label(state.system.net_up_rate)
+            );
+        }
+        if display.system.storage {
+            println!("Storage {:.0}% free", state.system.storage_percent_free);
+        }
     }
-    if let Some(error) = &state.codex.error {
-        println!("Codex error: {error}");
-    } else if let Some(result) = &state.codex.result {
-        for snapshot in ordered_buckets(result) {
-            let plan = snapshot
-                .get("planType")
-                .and_then(Value::as_str)
-                .map(|plan| if plan == "prolite" { "Pro" } else { plan })
-                .unwrap_or("");
-            println!("Codex {plan}");
-            if let Some(window) = codex_weekly_window(snapshot) {
-                println!(
-                    "{} {:.0}% left {}",
-                    window_label(window),
-                    left_percent(window),
-                    reset_label(window)
-                );
+    if sections.ai {
+        if display.amp_ai_needed(sections) {
+            for line in amp_once_lines(&state.amp, &display.ai) {
+                println!("{line}");
+            }
+        }
+        if display.ai.codex_quota
+            && let Some(error) = &state.codex.error
+        {
+            println!("Codex error: {error}");
+        } else if display.ai.codex_quota
+            && let Some(result) = &state.codex.result
+        {
+            for snapshot in ordered_buckets(result) {
+                let plan = snapshot
+                    .get("planType")
+                    .and_then(Value::as_str)
+                    .map(|plan| if plan == "prolite" { "Pro" } else { plan })
+                    .unwrap_or("");
+                println!("Codex {plan}");
+                if let Some(window) = codex_weekly_window(snapshot) {
+                    println!(
+                        "{} {:.0}% left {}",
+                        window_label(window),
+                        left_percent(window),
+                        reset_label(window)
+                    );
+                }
             }
         }
     }
+}
+
+fn amp_once_lines(state: &ProviderState<AmpUsage>, display: &AiDisplayConfig) -> Vec<String> {
+    if let Some(error) = &state.error {
+        return vec![format!("Amp error: {error}")];
+    }
+    let Some(usage) = &state.result else {
+        return Vec::new();
+    };
+    let mut lines = Vec::new();
+    if state.stale {
+        let updated = state
+            .updated_at
+            .as_ref()
+            .map(|time| time.format("%-d %b, %-I:%M%P").to_string())
+            .unwrap_or_else(|| "unknown".into());
+        lines.push(format!("Amp usage last updated {updated}"));
+    }
+    if display.amp_plan
+        && let Some(percent) = usage.other_percent_remaining
+    {
+        let plan = usage.plan.as_deref().unwrap_or("Amp");
+        let reset = usage
+            .reset
+            .as_deref()
+            .map(|reset| format!(" · {reset}"))
+            .unwrap_or_default();
+        lines.push(format!("{plan} {percent}% remaining · Other usage{reset}"));
+    }
+    if display.amp_orbs
+        && let Some(percent) = usage.orb_percent_remaining
+    {
+        let runtime = usage
+            .orb_runtime
+            .as_deref()
+            .map(|runtime| format!(" · {runtime} runtime"))
+            .unwrap_or_default();
+        lines.push(format!("Amp Orbs {percent}% remaining{runtime}"));
+    }
+    if display.amp_credits
+        && let Some(credits) = &usage.individual_credits_remaining
+    {
+        lines.push(format!("Amp credits {credits} remaining"));
+    }
+    lines
 }
 
 fn provider_ready_for_once<T>(provider: &ProviderState<T>, started_at: &DateTime<Local>) -> bool {
@@ -685,15 +1054,17 @@ mod tests {
         let mut lines = Vec::new();
         let clocks = crate::config::Config::default().clocks;
 
-        render_clocks(&mut lines, &clocks, 58);
+        render_clocks(&mut lines, &clocks, &ClocksDisplayConfig::default(), 58);
 
-        assert_eq!(lines.len(), 3);
-        assert_eq!(line_text(&lines[0]).chars().count(), 58);
-        assert_eq!(line_text(&lines[1]).chars().count(), 58);
-        assert!(line_text(&lines[0]).contains("MUMBAI"));
-        assert!(line_text(&lines[0]).contains("SEATTLE"));
+        assert_eq!(lines.len(), 5);
+        assert!(line_text(&lines[0]).starts_with("CLOCKS"));
+        assert!(line_text(&lines[1]).is_empty());
+        assert_eq!(line_text(&lines[2]).chars().count(), 58);
+        assert_eq!(line_text(&lines[3]).chars().count(), 58);
+        assert!(line_text(&lines[2]).contains("MUMBAI"));
+        assert!(line_text(&lines[2]).contains("SEATTLE"));
         assert!(
-            lines[0]
+            lines[2]
                 .spans
                 .iter()
                 .filter(|span| span.style.fg == Some(Color::Cyan))
@@ -701,7 +1072,7 @@ mod tests {
                 == 4
         );
         assert!(
-            lines[1]
+            lines[3]
                 .spans
                 .iter()
                 .filter(|span| span.style.add_modifier.contains(Modifier::BOLD))
@@ -724,12 +1095,12 @@ mod tests {
             },
         ];
 
-        render_clocks(&mut lines, &clocks, 40);
+        render_clocks(&mut lines, &clocks, &ClocksDisplayConfig::default(), 40);
 
-        assert!(line_text(&lines[0]).contains("LONDON"));
-        assert!(line_text(&lines[0]).contains("TOKYO"));
+        assert!(line_text(&lines[2]).contains("LONDON"));
+        assert!(line_text(&lines[2]).contains("TOKYO"));
         assert_eq!(
-            lines[0]
+            lines[2]
                 .spans
                 .iter()
                 .filter(|span| span.style.fg == Some(Color::Cyan))
@@ -799,7 +1170,6 @@ mod tests {
             label: "Codex Pro".into(),
             percent_left: 96.0,
             reset: Some("09:48am 8 Aug".into()),
-            suffix: None,
         };
 
         for width in [9, 10, 11, 12, 18, 19] {
@@ -824,13 +1194,11 @@ mod tests {
                 label: "Megawatt".into(),
                 percent_left: 100.0,
                 reset: Some("22 Sep".into()),
-                suffix: None,
             },
             AiQuotaRow {
                 label: "Codex Pro".into(),
                 percent_left: 95.0,
                 reset: Some("27 Aug".into()),
-                suffix: None,
             },
         ];
         let mut lines = Vec::new();
@@ -862,11 +1230,143 @@ mod tests {
     }
 
     #[test]
+    fn renders_wrapped_alerts_at_the_top_only_when_present() {
+        let today = date("2026-08-02");
+        let state = AppState {
+            amp_activity: ProviderState {
+                result: Some(AmpActivityUsage {
+                    daily_usage_buckets: vec![crate::model::AmpDailyUsageBucket {
+                        date: today.to_string(),
+                        tokens: 1,
+                        ..crate::model::AmpDailyUsageBucket::default()
+                    }],
+                }),
+                retry_after: Some(Duration::from_secs(40 * 60)),
+                ..ProviderState::default()
+            },
+            ..AppState::default()
+        };
+        let mut lines = Vec::new();
+
+        render_alerts(&mut lines, &state, 40, today);
+        let text = lines.iter().map(line_text).collect::<Vec<_>>();
+
+        assert!(text[0].starts_with("ALERTS"));
+        assert!(text[1].is_empty());
+        assert!(text[2].starts_with("Amp Code activity history sync"));
+        assert!(text.join(" ").contains("resumes in ~40m"));
+        assert!(!text.join(" ").contains("Amp sync"));
+        assert!(text.iter().all(|line| line.chars().count() <= 40));
+
+        let mut empty = Vec::new();
+        render_alerts(&mut empty, &AppState::default(), 40, today);
+        assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn renders_only_enabled_sections() {
+        let sections = SectionsConfig {
+            clocks: false,
+            system: false,
+            ai: false,
+            amp_activity: false,
+            codex_activity: true,
+        };
+
+        let lines = stats_lines(
+            &AppState::default(),
+            &[],
+            &sections,
+            &SectionDisplayConfig::default(),
+            58,
+        );
+        let text = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
+
+        assert!(text.contains("CODEX ACTIVITY"));
+        assert!(!text.contains("CLOCKS"));
+        assert!(!text.contains("SYSTEM"));
+        assert!(!text.contains("\nAI "));
+        assert!(!text.contains("AMP ACTIVITY"));
+    }
+
+    #[test]
+    fn renders_only_selected_section_details() {
+        let sections = SectionsConfig {
+            clocks: true,
+            system: true,
+            ai: true,
+            amp_activity: false,
+            codex_activity: false,
+        };
+        let display = SectionDisplayConfig {
+            clocks: ClocksDisplayConfig {
+                heading: false,
+                clock_1: true,
+                clock_2: false,
+                clock_3: false,
+                clock_4: false,
+            },
+            system: SystemDisplayConfig {
+                heading: true,
+                cpu: true,
+                ram: false,
+                gpu: false,
+                storage: false,
+                network: false,
+            },
+            ai: AiDisplayConfig {
+                heading: false,
+                amp_plan: false,
+                amp_orbs: true,
+                amp_credits: false,
+                codex_quota: false,
+            },
+            ..SectionDisplayConfig::default()
+        };
+        let state = AppState {
+            amp: ProviderState {
+                result: Some(AmpUsage {
+                    plan: Some("Megawatt".into()),
+                    other_percent_remaining: Some(90.0),
+                    orb_percent_remaining: Some(80.0),
+                    individual_credits_remaining: Some("$2.00".into()),
+                    ..AmpUsage::default()
+                }),
+                ..ProviderState::default()
+            },
+            ..AppState::default()
+        };
+
+        let lines = stats_lines(
+            &state,
+            &crate::config::Config::default().clocks,
+            &sections,
+            &display,
+            58,
+        );
+        let text = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
+
+        assert!(text.contains("MUMBAI"));
+        assert!(!text.contains("PARIS"));
+        assert!(!text.contains("CLOCKS"));
+        assert!(text.contains("SYSTEM"));
+        assert!(text.contains("CPU"));
+        assert!(!text.contains("RAM"));
+        assert!(text.contains("Amp Orbs"));
+        assert!(!text.contains("Megawatt"));
+        assert!(!text.contains("Credits"));
+        assert!(!text.contains("\nAI "));
+    }
+
+    #[test]
     fn separates_activity_from_the_codex_quota() {
         let amp = ProviderState {
             result: Some(AmpUsage {
                 plan: Some("Megawatt".into()),
                 other_percent_remaining: Some(82.0),
+                orb_percent_remaining: Some(64.5),
+                orb_runtime: Some("1h20m12.210s".into()),
+                individual_credits_remaining: Some("$1.01".into()),
                 reset: Some("resets upon renewal in 1 month".into()),
             }),
             ..ProviderState::default()
@@ -891,7 +1391,15 @@ mod tests {
         };
         let mut lines = Vec::new();
 
-        render_ai_at(&mut lines, &amp, &codex, &activity, 40, date("2026-08-02"));
+        render_ai_at(
+            &mut lines,
+            &amp,
+            &ProviderState::default(),
+            &codex,
+            &activity,
+            58,
+            date("2026-08-02"),
+        );
         let text = lines.iter().map(line_text).collect::<Vec<_>>();
         let megawatt = text
             .iter()
@@ -901,11 +1409,65 @@ mod tests {
             .iter()
             .position(|line| line.contains("Codex Pro"))
             .unwrap();
+        let orbs = text
+            .iter()
+            .position(|line| line.contains("Amp Orbs"))
+            .unwrap();
+        let credits = text
+            .iter()
+            .position(|line| line.contains("Credits"))
+            .unwrap();
+        let amp_activity = text
+            .iter()
+            .position(|line| line.starts_with("AMP ACTIVITY"))
+            .unwrap();
+        let codex_activity = text
+            .iter()
+            .position(|line| line.contains("CODEX ACTIVITY"))
+            .unwrap();
 
         assert!(text[0].starts_with("AI"));
-        assert!(megawatt < quota);
-        assert!(text[quota + 1].is_empty());
-        assert!(text[quota + 2].contains("Jul"));
-        assert!(text[quota + 3].starts_with("Sun"));
+        assert!(text.iter().all(|line| line.chars().count() <= 58));
+        assert!(megawatt < orbs);
+        assert!(orbs < quota);
+        assert!(quota < credits);
+        assert!(text[orbs].contains("65% left"));
+        assert!(!text[orbs].contains("1h20m12.210s"));
+        assert!(text[megawatt].contains("Megawatt"));
+        assert!(!text[megawatt].contains("Other usage"));
+        let reset = amp_compact_reset_label("resets upon renewal in 1 month");
+        assert!(text[megawatt].contains(&reset));
+        assert!(text[orbs].contains(&reset));
+        assert!(text[credits].contains("$1.01 remaining"));
+        assert!(credits < amp_activity);
+        assert!(amp_activity < codex_activity);
+        assert!(text[codex_activity + 2].contains("Jul"));
+        assert!(text[codex_activity + 3].contains("Sun"));
+    }
+
+    #[test]
+    fn formats_all_amp_values_for_once_output() {
+        let state = ProviderState {
+            result: Some(AmpUsage {
+                plan: Some("Gigawatt".into()),
+                other_percent_remaining: Some(97.5),
+                orb_percent_remaining: Some(64.25),
+                orb_runtime: Some("12m3s".into()),
+                individual_credits_remaining: Some("$2.50".into()),
+                reset: Some("resets upon renewal in 4 days".into()),
+            }),
+            stale: true,
+            ..ProviderState::default()
+        };
+
+        let lines = amp_once_lines(&state, &AiDisplayConfig::default());
+
+        assert_eq!(lines[0], "Amp usage last updated unknown");
+        assert_eq!(
+            lines[1],
+            "Gigawatt 97.5% remaining · Other usage · resets upon renewal in 4 days"
+        );
+        assert_eq!(lines[2], "Amp Orbs 64.25% remaining · 12m3s runtime");
+        assert_eq!(lines[3], "Amp credits $2.50 remaining");
     }
 }

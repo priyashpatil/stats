@@ -9,7 +9,7 @@ Stats is a lightweight dashboard for your Mac's system health, Amp usage, and Co
 ## What it shows
 
 - CPU, RAM, GPU, storage, and network metrics
-- Amp subscription usage
+- Amp subscription, Orb usage/runtime, and individual credit balance
 - Codex weekly quota and token activity
 - Four customizable world clocks
 
@@ -57,7 +57,8 @@ For a CLI-only installation, download `stats-...-macOS-arm64.tar.gz` from the sa
 1. Open Stats from your Applications folder. The dashboard appears and a Stats icon is added to the menu bar.
 2. Use the menu bar icon to show or hide the dashboard, open **Settings**, or quit Stats.
 3. In **Settings → General**, choose whether Stats should launch when you sign in.
-4. In **Settings → Clocks**, search for a city or time zone for each of the four clocks.
+4. In **Settings → Sections**, choose which dashboard sections to display.
+5. In **Settings → Clocks**, search for a city or time zone for each of the four clocks.
 
 You can move and resize the dashboard. Stats remembers its position and restores it on the primary desktop the next time it opens.
 
@@ -76,7 +77,11 @@ Press `q` or Escape to quit. For a single, script-friendly snapshot, run:
 stats --once
 ```
 
-Run `stats --help` to see all CLI options. The AI usage sections require both `amp` and `codex` to be available in `PATH`.
+Run `stats --help` to see all CLI options. Enabled Amp and Codex sections require their corresponding CLIs to be available in `PATH`.
+
+Amp percentage meters show the remaining quota reported by `amp usage`. The non-Orb allowance is labeled with the subscription name, such as **Megawatt**, while **Amp Orbs** identifies the Orb allowance. Stats also shows renewal/reset text, Orb runtime, and the individual credit balance when Amp provides them. Orb runtime and credits are exact supplemental values rather than percentage charts because Amp does not report a corresponding limit for either value. Previously fetched Amp values show their last-updated time until a fresh CLI response is available.
+
+The separate **Amp Activity** panel uses UTC-day ranges supported by `amp usage --details` to build a token calendar. A table compares covered/paid recorded cost, Orb runtime, model token usage, and source token usage across the most recent 1, 7, and 30 UTC days from the available cache. Its grid always fills the available width. Stats requests only the days needed by that visible grid, caches completed UTC days permanently, and refreshes only the current partial day. A persistent rolling limiter caps Stats at 40 account/activity lookups and 24 historical lookups per hour, leaving at least 20 of Amp's shared hourly allowance for other consumers. If Amp still returns a rate limit, Stats keeps cached data visible and pauses all lookups until Amp's retry window or the next locally calculated rolling-window slot. Amp and Codex activity remain separate datasets and charts.
 
 GPU utilization uses the `ioreg` metrics provided by macOS and requires no elevated permissions.
 
@@ -96,10 +101,10 @@ stats config path
 
 Use a different file for one invocation with `stats --config /path/to/config.toml`. Command-line options override environment variables, which override values from the file. A missing file uses the built-in defaults; the macOS app creates it when you change a shared setting or choose **Settings → General → Open Configuration File**.
 
-Restart a running dashboard after editing the file directly so it reloads the new values.
+A running dashboard watches the config file and reloads automatically after settings changes or direct edits.
 
 ```toml
-version = 1
+version = 2
 
 [[clocks]]
 label = "Mumbai"
@@ -117,6 +122,50 @@ timezone = "Australia/Sydney"
 label = "Seattle"
 timezone = "America/Los_Angeles"
 
+[sections]
+clocks = true
+system = true
+ai = true
+amp_activity = true
+codex_activity = true
+
+[section_display.clocks]
+heading = true
+clock_1 = true
+clock_2 = true
+clock_3 = true
+clock_4 = true
+
+[section_display.system]
+heading = true
+cpu = true
+ram = true
+gpu = true
+storage = true
+network = true
+
+[section_display.ai]
+heading = true
+amp_plan = true
+amp_orbs = true
+amp_credits = true
+codex_quota = true
+
+[section_display.amp_activity]
+heading = true
+calendar = true
+daily_activity = true
+usage_summary = true
+models = true
+sources = true
+sync_alerts = true
+
+[section_display.codex_activity]
+heading = true
+calendar = true
+overview = true
+daily_activity = true
+
 [refresh]
 codex_seconds = 60
 amp_seconds = 300
@@ -124,13 +173,15 @@ storage_seconds = 300
 
 [desktop]
 font_size = 15
+show_scrollbar = false
 ```
 
-The config requires four clocks with valid IANA time zone identifiers. `desktop.font_size` controls the embedded terminal in the macOS app and accepts values from 10 through 24. Launch-at-login and window placement remain native macOS settings.
+Version 2 requires the complete configuration shown above; older versions and omitted fields are rejected. The config requires four clocks with valid IANA time zone identifiers. The `[sections]` flags independently control the Clocks, System, AI quota, Amp Activity, and Codex Activity sections. The corresponding `[section_display.*]` tables control their headings and individual rows or charts. An enabled section must have at least one display option enabled; a disabled section may retain any display choices. Data providers are not refreshed when none of their visible controls require them. `desktop.font_size` controls the embedded terminal in the macOS app and accepts values from 10 through 24. `desktop.show_scrollbar` controls the dashboard scrollbar. Launch-at-login and window placement remain native macOS settings.
 
 ## Privacy and security
 
 - Amp and Codex requests are made through their installed CLIs; credentials are not copied into Stats.
+- Stats parses and caches account-level and UTC-day aggregate usage only; it does not retain the signed-in identity, thread titles, thread IDs, or per-thread details printed by Amp.
 - The Codex app server listens only on `127.0.0.1` while Stats is running.
 - Parsed usage responses are cached in the operating system's user cache directory (`~/Library/Caches/stats` on macOS). On Unix systems, Stats restricts the directory to the current user (`0700`) and cache files to `0600`.
 

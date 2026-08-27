@@ -10,7 +10,7 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::model::{AmpUsage, AppState, CodexActivityUsage};
+use crate::model::{AmpActivityUsage, AmpRequestLedger, AmpUsage, AppState, CodexActivityUsage};
 
 #[derive(Debug, Clone, Deserialize)]
 struct CacheEnvelope<T> {
@@ -105,11 +105,24 @@ fn epoch_seconds() -> f64 {
         .unwrap_or_default()
 }
 
+pub(crate) fn load_amp_request_ledger() -> AmpRequestLedger {
+    read_usage_cache::<AmpRequestLedger>("amp-requests", None)
+        .map(|(ledger, _)| ledger)
+        .unwrap_or_default()
+}
+
 pub(crate) fn prime_usage_caches(state: &Arc<Mutex<AppState>>) {
     if let Some((result, updated_at)) = read_usage_cache::<AmpUsage>("amp", None) {
         let mut state = state.lock().unwrap();
         state.amp.result = Some(result);
         state.amp.updated_at = Some(updated_at);
+        state.amp.stale = true;
+    }
+    if let Some((result, updated_at)) = read_usage_cache::<AmpActivityUsage>("amp-activity", None) {
+        let mut state = state.lock().unwrap();
+        state.amp_activity.result = Some(result);
+        state.amp_activity.updated_at = Some(updated_at);
+        state.amp_activity.stale = true;
     }
     if let Some((result, updated_at)) = read_usage_cache::<Value>("codex", None) {
         let mut state = state.lock().unwrap();
@@ -133,6 +146,7 @@ pub(crate) fn load_cached_amp(state: &Arc<Mutex<AppState>>, error: String) {
         state.amp.result = Some(result);
         state.amp.updated_at = Some(updated_at);
         state.amp.error = None;
+        state.amp.stale = true;
     } else {
         state.amp.error = Some(error);
     }
