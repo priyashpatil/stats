@@ -64,6 +64,8 @@ pub(crate) struct AiDisplayConfig {
     pub(crate) amp_orbs: bool,
     pub(crate) amp_credits: bool,
     pub(crate) codex_quota: bool,
+    #[serde(default)]
+    pub(crate) claude_quota: bool,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -89,6 +91,8 @@ pub(crate) struct CodexActivityDisplayConfig {
 pub(crate) struct RefreshConfig {
     pub(crate) codex_seconds: u64,
     pub(crate) amp_seconds: u64,
+    #[serde(default = "default_claude_seconds")]
+    pub(crate) claude_seconds: u64,
     pub(crate) storage_seconds: u64,
 }
 
@@ -153,7 +157,8 @@ all_true_default!(AiDisplayConfig {
     amp_plan,
     amp_orbs,
     amp_credits,
-    codex_quota
+    codex_quota,
+    claude_quota
 });
 all_true_default!(AmpActivityDisplayConfig {
     heading,
@@ -189,6 +194,10 @@ impl SectionDisplayConfig {
         sections.ai && self.ai.codex_quota
     }
 
+    pub(crate) fn claude_ai_needed(&self, sections: &SectionsConfig) -> bool {
+        sections.ai && self.ai.claude_quota
+    }
+
     pub(crate) fn amp_activity_needed(&self, sections: &SectionsConfig) -> bool {
         sections.amp_activity
             && (self.amp_activity.calendar
@@ -212,9 +221,14 @@ impl Default for RefreshConfig {
         Self {
             codex_seconds: 60,
             amp_seconds: 300,
+            claude_seconds: default_claude_seconds(),
             storage_seconds: 300,
         }
     }
+}
+
+fn default_claude_seconds() -> u64 {
+    300
 }
 
 impl Default for DesktopConfig {
@@ -298,6 +312,9 @@ fn validate(config: &Config) -> Result<(), String> {
     if config.refresh.amp_seconds < 60 {
         return Err("refresh.amp_seconds must be at least 60".into());
     }
+    if config.refresh.claude_seconds < 60 {
+        return Err("refresh.claude_seconds must be at least 60".into());
+    }
     if config.refresh.storage_seconds < 60 {
         return Err("refresh.storage_seconds must be at least 60".into());
     }
@@ -335,7 +352,8 @@ any_enabled!(AiDisplayConfig {
     amp_plan,
     amp_orbs,
     amp_credits,
-    codex_quota
+    codex_quota,
+    claude_quota
 });
 any_enabled!(AmpActivityDisplayConfig {
     heading,
@@ -497,6 +515,7 @@ mod tests {
                 amp_orbs: false,
                 amp_credits: false,
                 codex_quota: false,
+                claude_quota: false,
             },
             amp_activity: AmpActivityDisplayConfig {
                 heading: true,
@@ -519,6 +538,7 @@ mod tests {
         assert!(!display.system_needed(&sections));
         assert!(!display.amp_ai_needed(&sections));
         assert!(!display.codex_ai_needed(&sections));
+        assert!(!display.claude_ai_needed(&sections));
         assert!(!display.amp_activity_needed(&sections));
         assert!(!display.codex_activity_needed(&sections));
     }
@@ -535,6 +555,7 @@ mod tests {
                 .replace("amp_activity = true", "amp_activity = false")
                 .replace("codex_seconds = 60", "codex_seconds = 10")
                 .replace("amp_seconds = 300", "amp_seconds = 120")
+                .replace("claude_seconds = 300", "claude_seconds = 180")
                 .replace("storage_seconds = 300", "storage_seconds = 180")
                 .replace("font_size = 15", "font_size = 18"),
         );
@@ -546,8 +567,26 @@ mod tests {
         assert!(!config.sections.amp_activity);
         assert!(config.sections.codex_activity);
         assert_eq!(config.refresh.codex_seconds, 10);
+        assert_eq!(config.refresh.claude_seconds, 180);
         assert_eq!(config.desktop.font_size, 18);
         assert!(!config.desktop.show_scrollbar);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn loads_config_created_before_claude_integration() {
+        let path = temporary_path("pre-claude");
+        write(
+            &path,
+            &valid_config()
+                .replace("claude_quota = true\n", "")
+                .replace("claude_seconds = 300\n", ""),
+        );
+
+        let config = load(&path).unwrap();
+
+        assert!(!config.section_display.ai.claude_quota);
+        assert_eq!(config.refresh.claude_seconds, 300);
         fs::remove_file(path).unwrap();
     }
 
@@ -628,6 +667,7 @@ amp_plan = true
 amp_orbs = true
 amp_credits = true
 codex_quota = true
+claude_quota = true
 
 [section_display.amp_activity]
 heading = true
@@ -647,6 +687,7 @@ daily_activity = true
 [refresh]
 codex_seconds = 60
 amp_seconds = 300
+claude_seconds = 300
 storage_seconds = 300
 
 [desktop]

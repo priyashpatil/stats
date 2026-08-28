@@ -209,6 +209,7 @@ struct AIDisplayConfig: Codable, Equatable {
   var ampOrbs = true
   var ampCredits = true
   var codexQuota = true
+  var claudeQuota = true
 
   enum CodingKeys: String, CodingKey {
     case heading
@@ -216,6 +217,7 @@ struct AIDisplayConfig: Codable, Equatable {
     case ampOrbs = "amp_orbs"
     case ampCredits = "amp_credits"
     case codexQuota = "codex_quota"
+    case claudeQuota = "claude_quota"
   }
 
   init(
@@ -223,13 +225,15 @@ struct AIDisplayConfig: Codable, Equatable {
     ampPlan: Bool = true,
     ampOrbs: Bool = true,
     ampCredits: Bool = true,
-    codexQuota: Bool = true
+    codexQuota: Bool = true,
+    claudeQuota: Bool = true
   ) {
     self.heading = heading
     self.ampPlan = ampPlan
     self.ampOrbs = ampOrbs
     self.ampCredits = ampCredits
     self.codexQuota = codexQuota
+    self.claudeQuota = claudeQuota
   }
 
   init(from decoder: Decoder) throws {
@@ -239,9 +243,12 @@ struct AIDisplayConfig: Codable, Equatable {
     ampOrbs = try container.decode(Bool.self, forKey: .ampOrbs)
     ampCredits = try container.decode(Bool.self, forKey: .ampCredits)
     codexQuota = try container.decode(Bool.self, forKey: .codexQuota)
+    claudeQuota = try container.decodeIfPresent(Bool.self, forKey: .claudeQuota) ?? false
   }
 
-  var hasEnabledOption: Bool { heading || ampPlan || ampOrbs || ampCredits || codexQuota }
+  var hasEnabledOption: Bool {
+    heading || ampPlan || ampOrbs || ampCredits || codexQuota || claudeQuota
+  }
 }
 
 struct AmpActivityDisplayConfig: Codable, Equatable {
@@ -336,17 +343,25 @@ struct CodexActivityDisplayConfig: Codable, Equatable {
 struct RefreshConfig: Codable {
   var codexSeconds: Int
   var ampSeconds: Int
+  var claudeSeconds: Int
   var storageSeconds: Int
 
-  init(codexSeconds: Int = 60, ampSeconds: Int = 300, storageSeconds: Int = 300) {
+  init(
+    codexSeconds: Int = 60,
+    ampSeconds: Int = 300,
+    claudeSeconds: Int = 300,
+    storageSeconds: Int = 300
+  ) {
     self.codexSeconds = codexSeconds
     self.ampSeconds = ampSeconds
+    self.claudeSeconds = claudeSeconds
     self.storageSeconds = storageSeconds
   }
 
   enum CodingKeys: String, CodingKey {
     case codexSeconds = "codex_seconds"
     case ampSeconds = "amp_seconds"
+    case claudeSeconds = "claude_seconds"
     case storageSeconds = "storage_seconds"
   }
 
@@ -354,6 +369,7 @@ struct RefreshConfig: Codable {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     codexSeconds = try container.decode(Int.self, forKey: .codexSeconds)
     ampSeconds = try container.decode(Int.self, forKey: .ampSeconds)
+    claudeSeconds = try container.decodeIfPresent(Int.self, forKey: .claudeSeconds) ?? 300
     storageSeconds = try container.decode(Int.self, forKey: .storageSeconds)
   }
 }
@@ -529,6 +545,9 @@ final class StatsConfigStore {
     }
     guard config.refresh.ampSeconds >= 60 else {
       throw ConfigError.invalid("refresh.amp_seconds must be at least 60")
+    }
+    guard config.refresh.claudeSeconds >= 60 else {
+      throw ConfigError.invalid("refresh.claude_seconds must be at least 60")
     }
     guard config.refresh.storageSeconds >= 60 else {
       throw ConfigError.invalid("refresh.storage_seconds must be at least 60")

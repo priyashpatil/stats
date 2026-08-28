@@ -125,6 +125,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
           ("Amp Orbs", "ampOrbs", sectionDisplay.ai.ampOrbs),
           ("Amp credits", "ampCredits", sectionDisplay.ai.ampCredits),
           ("Codex quota", "codexQuota", sectionDisplay.ai.codexQuota),
+          ("Claude quota", "claudeQuota", sectionDisplay.ai.claudeQuota),
         ]
       ),
       sectionViewController(
@@ -680,6 +681,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     case ("ai", "ampOrbs"): display.ai.ampOrbs = enabled
     case ("ai", "ampCredits"): display.ai.ampCredits = enabled
     case ("ai", "codexQuota"): display.ai.codexQuota = enabled
+    case ("ai", "claudeQuota"): display.ai.claudeQuota = enabled
     case ("ampActivity", "heading"): display.ampActivity.heading = enabled
     case ("ampActivity", "calendar"): display.ampActivity.calendar = enabled
     case ("ampActivity", "dailyActivity"): display.ampActivity.dailyActivity = enabled
@@ -713,6 +715,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     case ("ai", "ampOrbs"): selectedSectionDisplay.ai.ampOrbs
     case ("ai", "ampCredits"): selectedSectionDisplay.ai.ampCredits
     case ("ai", "codexQuota"): selectedSectionDisplay.ai.codexQuota
+    case ("ai", "claudeQuota"): selectedSectionDisplay.ai.claudeQuota
     case ("ampActivity", "heading"): selectedSectionDisplay.ampActivity.heading
     case ("ampActivity", "calendar"): selectedSectionDisplay.ampActivity.calendar
     case ("ampActivity", "dailyActivity"): selectedSectionDisplay.ampActivity.dailyActivity

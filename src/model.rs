@@ -13,6 +13,7 @@ pub(crate) struct Args {
     pub(crate) interval: u64,
     pub(crate) once: bool,
     pub(crate) amp_interval: u64,
+    pub(crate) claude_interval: u64,
     pub(crate) storage_interval: u64,
     pub(crate) clocks: Vec<Clock>,
     pub(crate) sections: SectionsConfig,
@@ -123,6 +124,20 @@ pub(crate) struct CodexActivitySummary {
     pub(crate) longest_streak_days: Option<u64>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct ClaudeUsage {
+    pub(crate) limits: Vec<ClaudeLimit>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub(crate) struct ClaudeLimit {
+    pub(crate) label: String,
+    pub(crate) used_percent: f64,
+    pub(crate) reset: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) struct DailyTokenUsage {
     pub(crate) date: NaiveDate,
@@ -171,6 +186,7 @@ pub(crate) struct AppState {
     pub(crate) amp: ProviderState<AmpUsage>,
     pub(crate) amp_activity: ProviderState<AmpActivityUsage>,
     pub(crate) amp_activity_history_days: usize,
+    pub(crate) claude: ProviderState<ClaudeUsage>,
     pub(crate) codex: ProviderState<Value>,
     pub(crate) codex_activity: ProviderState<CodexActivityUsage>,
     pub(crate) system: SystemMetrics,

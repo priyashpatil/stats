@@ -10,7 +10,9 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::model::{AmpActivityUsage, AmpRequestLedger, AmpUsage, AppState, CodexActivityUsage};
+use crate::model::{
+    AmpActivityUsage, AmpRequestLedger, AmpUsage, AppState, ClaudeUsage, CodexActivityUsage,
+};
 
 #[derive(Debug, Clone, Deserialize)]
 struct CacheEnvelope<T> {
@@ -129,6 +131,12 @@ pub(crate) fn prime_usage_caches(state: &Arc<Mutex<AppState>>) {
         state.codex.result = Some(result);
         state.codex.updated_at = Some(updated_at);
     }
+    if let Some((result, updated_at)) = read_usage_cache::<ClaudeUsage>("claude", None) {
+        let mut state = state.lock().unwrap();
+        state.claude.result = Some(result);
+        state.claude.updated_at = Some(updated_at);
+        state.claude.stale = true;
+    }
     if let Some((result, updated_at)) =
         read_usage_cache::<CodexActivityUsage>("codex-activity", None)
     {
@@ -162,6 +170,21 @@ pub(crate) fn load_cached_codex(state: &Arc<Mutex<AppState>>, error: String) {
         state.codex.error = None;
     } else {
         state.codex.error = Some(error);
+    }
+}
+
+pub(crate) fn load_cached_claude(state: &Arc<Mutex<AppState>>, error: String) {
+    let cached =
+        read_usage_cache::<ClaudeUsage>("claude", Some(env_u64("STATS_USAGE_CACHE_TTL", 600)))
+            .or_else(|| read_usage_cache::<ClaudeUsage>("claude", None));
+    let mut state = state.lock().unwrap();
+    if let Some((result, updated_at)) = cached {
+        state.claude.result = Some(result);
+        state.claude.updated_at = Some(updated_at);
+        state.claude.error = None;
+        state.claude.stale = true;
+    } else {
+        state.claude.error = Some(error);
     }
 }
 
