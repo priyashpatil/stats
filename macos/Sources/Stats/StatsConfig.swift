@@ -210,6 +210,9 @@ struct AIDisplayConfig: Codable, Equatable {
   var ampCredits = true
   var codexQuota = true
   var claudeQuota = true
+  var antigravityQuota = false
+  var cursorQuota = false
+  var grokQuota = false
 
   enum CodingKeys: String, CodingKey {
     case heading
@@ -218,6 +221,9 @@ struct AIDisplayConfig: Codable, Equatable {
     case ampCredits = "amp_credits"
     case codexQuota = "codex_quota"
     case claudeQuota = "claude_quota"
+    case antigravityQuota = "antigravity_quota"
+    case cursorQuota = "cursor_quota"
+    case grokQuota = "grok_quota"
   }
 
   init(
@@ -226,7 +232,10 @@ struct AIDisplayConfig: Codable, Equatable {
     ampOrbs: Bool = true,
     ampCredits: Bool = true,
     codexQuota: Bool = true,
-    claudeQuota: Bool = true
+    claudeQuota: Bool = true,
+    antigravityQuota: Bool = false,
+    cursorQuota: Bool = false,
+    grokQuota: Bool = false
   ) {
     self.heading = heading
     self.ampPlan = ampPlan
@@ -234,6 +243,9 @@ struct AIDisplayConfig: Codable, Equatable {
     self.ampCredits = ampCredits
     self.codexQuota = codexQuota
     self.claudeQuota = claudeQuota
+    self.antigravityQuota = antigravityQuota
+    self.cursorQuota = cursorQuota
+    self.grokQuota = grokQuota
   }
 
   init(from decoder: Decoder) throws {
@@ -244,10 +256,14 @@ struct AIDisplayConfig: Codable, Equatable {
     ampCredits = try container.decode(Bool.self, forKey: .ampCredits)
     codexQuota = try container.decode(Bool.self, forKey: .codexQuota)
     claudeQuota = try container.decodeIfPresent(Bool.self, forKey: .claudeQuota) ?? false
+    antigravityQuota = try container.decodeIfPresent(Bool.self, forKey: .antigravityQuota) ?? false
+    cursorQuota = try container.decodeIfPresent(Bool.self, forKey: .cursorQuota) ?? false
+    grokQuota = try container.decodeIfPresent(Bool.self, forKey: .grokQuota) ?? false
   }
 
   var hasEnabledOption: Bool {
     heading || ampPlan || ampOrbs || ampCredits || codexQuota || claudeQuota
+      || antigravityQuota || cursorQuota || grokQuota
   }
 }
 
@@ -344,17 +360,20 @@ struct RefreshConfig: Codable {
   var codexSeconds: Int
   var ampSeconds: Int
   var claudeSeconds: Int
+  var quotaSeconds: Int
   var storageSeconds: Int
 
   init(
     codexSeconds: Int = 60,
     ampSeconds: Int = 300,
     claudeSeconds: Int = 300,
+    quotaSeconds: Int = 300,
     storageSeconds: Int = 300
   ) {
     self.codexSeconds = codexSeconds
     self.ampSeconds = ampSeconds
     self.claudeSeconds = claudeSeconds
+    self.quotaSeconds = quotaSeconds
     self.storageSeconds = storageSeconds
   }
 
@@ -362,6 +381,7 @@ struct RefreshConfig: Codable {
     case codexSeconds = "codex_seconds"
     case ampSeconds = "amp_seconds"
     case claudeSeconds = "claude_seconds"
+    case quotaSeconds = "quota_seconds"
     case storageSeconds = "storage_seconds"
   }
 
@@ -370,6 +390,7 @@ struct RefreshConfig: Codable {
     codexSeconds = try container.decode(Int.self, forKey: .codexSeconds)
     ampSeconds = try container.decode(Int.self, forKey: .ampSeconds)
     claudeSeconds = try container.decodeIfPresent(Int.self, forKey: .claudeSeconds) ?? 300
+    quotaSeconds = try container.decodeIfPresent(Int.self, forKey: .quotaSeconds) ?? 300
     storageSeconds = try container.decode(Int.self, forKey: .storageSeconds)
   }
 }
@@ -548,6 +569,9 @@ final class StatsConfigStore {
     }
     guard config.refresh.claudeSeconds >= 60 else {
       throw ConfigError.invalid("refresh.claude_seconds must be at least 60")
+    }
+    guard config.refresh.quotaSeconds >= 60 else {
+      throw ConfigError.invalid("refresh.quota_seconds must be at least 60")
     }
     guard config.refresh.storageSeconds >= 60 else {
       throw ConfigError.invalid("refresh.storage_seconds must be at least 60")

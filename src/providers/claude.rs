@@ -9,7 +9,7 @@ use regex::Regex;
 use serde_json::Value;
 
 use crate::cache::{load_cached_claude, write_usage_cache};
-use crate::model::{AppState, ClaudeLimit, ClaudeUsage};
+use crate::model::{AppState, QuotaLimit, QuotaUsage};
 use crate::worker::sleep_stop;
 
 pub(crate) fn spawn_refresh_claude(
@@ -37,7 +37,7 @@ pub(crate) fn spawn_refresh_claude(
     });
 }
 
-fn read_claude_usage() -> Result<ClaudeUsage, String> {
+fn read_claude_usage() -> Result<QuotaUsage, String> {
     let output = Command::new("claude")
         .args([
             "--safe-mode",
@@ -73,7 +73,7 @@ fn read_claude_usage() -> Result<ClaudeUsage, String> {
         .ok_or_else(|| "Claude usage response did not include plan limits".into())
 }
 
-fn extract_claude_usage(output: &str) -> Option<ClaudeUsage> {
+fn extract_claude_usage(output: &str) -> Option<QuotaUsage> {
     let percent = Regex::new(r"(?i)([0-9]+(?:\.[0-9]+)?)%\s+used").ok()?;
     let reset = Regex::new(r"(?i)\bresets?\s+(.+)$").ok()?;
     let mut limits = Vec::new();
@@ -113,13 +113,13 @@ fn extract_claude_usage(output: &str) -> Option<ClaudeUsage> {
                 value.to_string()
             })
         });
-        limits.push(ClaudeLimit {
+        limits.push(QuotaLimit {
             label,
             used_percent,
             reset,
         });
     }
-    (!limits.is_empty()).then_some(ClaudeUsage { limits })
+    (!limits.is_empty()).then_some(QuotaUsage { limits })
 }
 
 #[cfg(test)]

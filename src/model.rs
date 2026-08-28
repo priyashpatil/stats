@@ -14,6 +14,7 @@ pub(crate) struct Args {
     pub(crate) once: bool,
     pub(crate) amp_interval: u64,
     pub(crate) claude_interval: u64,
+    pub(crate) quota_interval: u64,
     pub(crate) storage_interval: u64,
     pub(crate) clocks: Vec<Clock>,
     pub(crate) sections: SectionsConfig,
@@ -126,13 +127,13 @@ pub(crate) struct CodexActivitySummary {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
-pub(crate) struct ClaudeUsage {
-    pub(crate) limits: Vec<ClaudeLimit>,
+pub(crate) struct QuotaUsage {
+    pub(crate) limits: Vec<QuotaLimit>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
-pub(crate) struct ClaudeLimit {
+pub(crate) struct QuotaLimit {
     pub(crate) label: String,
     pub(crate) used_percent: f64,
     pub(crate) reset: Option<String>,
@@ -186,8 +187,11 @@ pub(crate) struct AppState {
     pub(crate) amp: ProviderState<AmpUsage>,
     pub(crate) amp_activity: ProviderState<AmpActivityUsage>,
     pub(crate) amp_activity_history_days: usize,
-    pub(crate) claude: ProviderState<ClaudeUsage>,
+    pub(crate) antigravity: ProviderState<QuotaUsage>,
+    pub(crate) claude: ProviderState<QuotaUsage>,
     pub(crate) codex: ProviderState<Value>,
     pub(crate) codex_activity: ProviderState<CodexActivityUsage>,
+    pub(crate) cursor: ProviderState<QuotaUsage>,
+    pub(crate) grok: ProviderState<QuotaUsage>,
     pub(crate) system: SystemMetrics,
 }

@@ -13,6 +13,7 @@ pub(crate) fn parse_args() -> Result<Args, String> {
     let mut interval = None;
     let mut amp_interval = None;
     let mut claude_interval = None;
+    let mut quota_interval = None;
     let mut storage_interval = None;
 
     let mut iter = env::args().skip(1).peekable();
@@ -35,6 +36,7 @@ pub(crate) fn parse_args() -> Result<Args, String> {
             "-i" | "--interval" => interval = Some(parse_next_u64(&mut iter, &arg)?),
             "--amp-interval" => amp_interval = Some(parse_next_u64(&mut iter, &arg)?),
             "--claude-interval" => claude_interval = Some(parse_next_u64(&mut iter, &arg)?),
+            "--quota-interval" => quota_interval = Some(parse_next_u64(&mut iter, &arg)?),
             "--storage-interval" => storage_interval = Some(parse_next_u64(&mut iter, &arg)?),
             "-h" | "--help" => {
                 print_help();
@@ -52,6 +54,7 @@ pub(crate) fn parse_args() -> Result<Args, String> {
             once,
             amp_interval: 300,
             claude_interval: 300,
+            quota_interval: 300,
             storage_interval: 300,
             clocks: Config::default().clocks,
             sections: Config::default().sections,
@@ -72,6 +75,8 @@ pub(crate) fn parse_args() -> Result<Args, String> {
         .unwrap_or_else(|| env_u64("AMP_USAGE_WATCH_INTERVAL", config.refresh.amp_seconds));
     let claude_interval = claude_interval
         .unwrap_or_else(|| env_u64("CLAUDE_USAGE_WATCH_INTERVAL", config.refresh.claude_seconds));
+    let quota_interval = quota_interval
+        .unwrap_or_else(|| env_u64("AI_QUOTA_WATCH_INTERVAL", config.refresh.quota_seconds));
     let storage_interval = storage_interval.unwrap_or_else(|| {
         env_u64(
             "CODEX_USAGE_STORAGE_INTERVAL",
@@ -92,6 +97,9 @@ pub(crate) fn parse_args() -> Result<Args, String> {
     if claude_interval < 60 {
         return Err("claude interval must be an integer >= 60 seconds".into());
     }
+    if quota_interval < 60 {
+        return Err("quota interval must be an integer >= 60 seconds".into());
+    }
     Ok(Args {
         action,
         mode,
@@ -99,6 +107,7 @@ pub(crate) fn parse_args() -> Result<Args, String> {
         once,
         amp_interval,
         claude_interval,
+        quota_interval,
         storage_interval: storage_interval.max(60),
         clocks,
         sections,
@@ -149,7 +158,7 @@ where
 }
 
 fn print_help() {
-    println!("Amp, Claude, Codex, and system stats");
+    println!("AI coding usage and system stats");
     println!();
     println!("Commands:");
     println!("      config path");
@@ -161,6 +170,7 @@ fn print_help() {
     println!("      --once");
     println!("      --amp-interval <seconds>");
     println!("      --claude-interval <seconds>");
+    println!("      --quota-interval <seconds>");
     println!("      --storage-interval <seconds>");
     println!("  -h, --help");
 }

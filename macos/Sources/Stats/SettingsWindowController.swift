@@ -126,6 +126,9 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
           ("Amp credits", "ampCredits", sectionDisplay.ai.ampCredits),
           ("Codex quota", "codexQuota", sectionDisplay.ai.codexQuota),
           ("Claude quota", "claudeQuota", sectionDisplay.ai.claudeQuota),
+          ("Antigravity quota", "antigravityQuota", sectionDisplay.ai.antigravityQuota),
+          ("Cursor quota", "cursorQuota", sectionDisplay.ai.cursorQuota),
+          ("Grok quota", "grokQuota", sectionDisplay.ai.grokQuota),
         ]
       ),
       sectionViewController(
@@ -682,6 +685,9 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     case ("ai", "ampCredits"): display.ai.ampCredits = enabled
     case ("ai", "codexQuota"): display.ai.codexQuota = enabled
     case ("ai", "claudeQuota"): display.ai.claudeQuota = enabled
+    case ("ai", "antigravityQuota"): display.ai.antigravityQuota = enabled
+    case ("ai", "cursorQuota"): display.ai.cursorQuota = enabled
+    case ("ai", "grokQuota"): display.ai.grokQuota = enabled
     case ("ampActivity", "heading"): display.ampActivity.heading = enabled
     case ("ampActivity", "calendar"): display.ampActivity.calendar = enabled
     case ("ampActivity", "dailyActivity"): display.ampActivity.dailyActivity = enabled
@@ -716,6 +722,9 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     case ("ai", "ampCredits"): selectedSectionDisplay.ai.ampCredits
     case ("ai", "codexQuota"): selectedSectionDisplay.ai.codexQuota
     case ("ai", "claudeQuota"): selectedSectionDisplay.ai.claudeQuota
+    case ("ai", "antigravityQuota"): selectedSectionDisplay.ai.antigravityQuota
+    case ("ai", "cursorQuota"): selectedSectionDisplay.ai.cursorQuota
+    case ("ai", "grokQuota"): selectedSectionDisplay.ai.grokQuota
     case ("ampActivity", "heading"): selectedSectionDisplay.ampActivity.heading
     case ("ampActivity", "calendar"): selectedSectionDisplay.ampActivity.calendar
     case ("ampActivity", "dailyActivity"): selectedSectionDisplay.ampActivity.dailyActivity
