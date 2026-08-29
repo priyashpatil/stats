@@ -10,16 +10,11 @@ use crate::cache::prime_usage_caches;
 use crate::cli::{command_exists, parse_args};
 use crate::model::{Action, AppState, Args, Mode};
 use crate::providers::amp::{spawn_refresh_amp, spawn_refresh_amp_activity};
-use crate::providers::antigravity::{
-    executable as antigravity_executable, spawn_refresh_antigravity,
-};
 use crate::providers::claude::spawn_refresh_claude;
 use crate::providers::codex::{
     pick_port, run_codex_usage_status, shutdown_server, spawn_codex_client, start_codex_server,
     wait_ready,
 };
-use crate::providers::cursor::{executable as cursor_executable, spawn_refresh_cursor};
-use crate::providers::grok::{executable as grok_executable, spawn_refresh_grok};
 use crate::system::{prime_system, spawn_refresh_system};
 use crate::ui::{print_once, run_tui};
 
@@ -69,9 +64,6 @@ fn run() -> Result<AppOutcome, String> {
             let codex_needed = args.section_display.codex_ai_needed(&args.sections)
                 || args.section_display.codex_activity_needed(&args.sections);
             let claude_needed = args.section_display.claude_ai_needed(&args.sections);
-            let antigravity_needed = args.section_display.antigravity_ai_needed(&args.sections);
-            let cursor_needed = args.section_display.cursor_ai_needed(&args.sections);
-            let grok_needed = args.section_display.grok_ai_needed(&args.sections);
             if amp_needed && !command_exists("amp") {
                 return Err("amp not found in PATH".into());
             }
@@ -80,15 +72,6 @@ fn run() -> Result<AppOutcome, String> {
             }
             if claude_needed && !command_exists("claude") {
                 return Err("claude not found in PATH".into());
-            }
-            if antigravity_needed && antigravity_executable().is_none() {
-                return Err("agy not found".into());
-            }
-            if cursor_needed && cursor_executable().is_none() {
-                return Err("Cursor agent not found".into());
-            }
-            if grok_needed && grok_executable().is_none() {
-                return Err("grok not found".into());
             }
             run_stats(args)
         }
@@ -106,9 +89,6 @@ fn run_stats(args: Args) -> Result<AppOutcome, String> {
     let amp_ai_needed = args.section_display.amp_ai_needed(&args.sections);
     let codex_ai_needed = args.section_display.codex_ai_needed(&args.sections);
     let claude_ai_needed = args.section_display.claude_ai_needed(&args.sections);
-    let antigravity_ai_needed = args.section_display.antigravity_ai_needed(&args.sections);
-    let cursor_ai_needed = args.section_display.cursor_ai_needed(&args.sections);
-    let grok_ai_needed = args.section_display.grok_ai_needed(&args.sections);
     let amp_activity_needed = args.section_display.amp_activity_needed(&args.sections);
     let codex_activity_needed = args.section_display.codex_activity_needed(&args.sections);
     let codex_enabled = codex_ai_needed || codex_activity_needed;
@@ -135,15 +115,6 @@ fn run_stats(args: Args) -> Result<AppOutcome, String> {
         }
         if claude_ai_needed {
             spawn_refresh_claude(&state, &stop, args.claude_interval);
-        }
-        if antigravity_ai_needed {
-            spawn_refresh_antigravity(&state, &stop, args.quota_interval);
-        }
-        if cursor_ai_needed {
-            spawn_refresh_cursor(&state, &stop, args.quota_interval);
-        }
-        if grok_ai_needed {
-            spawn_refresh_grok(&state, &stop, args.quota_interval);
         }
         if let Some(port) = port {
             spawn_codex_client(

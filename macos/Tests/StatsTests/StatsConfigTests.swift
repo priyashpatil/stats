@@ -136,22 +136,14 @@ struct StatsConfigTests {
     try writeConfig(
       validConfig()
         .replacingOccurrences(of: "    claude_quota = true\n", with: "")
-        .replacingOccurrences(of: "    antigravity_quota = false\n", with: "")
-        .replacingOccurrences(of: "    cursor_quota = false\n", with: "")
-        .replacingOccurrences(of: "    grok_quota = false\n", with: "")
-        .replacingOccurrences(of: "    claude_seconds = 300\n", with: "")
-        .replacingOccurrences(of: "    quota_seconds = 300\n", with: ""),
+        .replacingOccurrences(of: "    claude_seconds = 300\n", with: ""),
       to: fixture.url
     )
 
     let store = try StatsConfigStore(url: fixture.url)
 
     #expect(store.config.sectionDisplay.ai.claudeQuota == false)
-    #expect(store.config.sectionDisplay.ai.antigravityQuota == false)
-    #expect(store.config.sectionDisplay.ai.cursorQuota == false)
-    #expect(store.config.sectionDisplay.ai.grokQuota == false)
     #expect(store.config.refresh.claudeSeconds == 300)
-    #expect(store.config.refresh.quotaSeconds == 300)
   }
 
   @Test("App updates preserve edits made directly to the file")
@@ -267,9 +259,6 @@ struct StatsConfigTests {
     amp_credits = true
     codex_quota = true
     claude_quota = true
-    antigravity_quota = false
-    cursor_quota = false
-    grok_quota = false
 
     [section_display.amp_activity]
     heading = true
@@ -290,7 +279,6 @@ struct StatsConfigTests {
     codex_seconds = 60
     amp_seconds = 300
     claude_seconds = 300
-    quota_seconds = 300
     storage_seconds = 300
 
     [desktop]

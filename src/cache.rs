@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::model::{
-    AmpActivityUsage, AmpRequestLedger, AmpUsage, AppState, CodexActivityUsage, QuotaUsage,
+    AmpActivityUsage, AmpRequestLedger, AmpUsage, AppState, ClaudeUsage, CodexActivityUsage,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -131,29 +131,18 @@ pub(crate) fn prime_usage_caches(state: &Arc<Mutex<AppState>>) {
         state.codex.result = Some(result);
         state.codex.updated_at = Some(updated_at);
     }
-    if let Some((result, updated_at)) = read_usage_cache::<QuotaUsage>("claude", None) {
+    if let Some((result, updated_at)) = read_usage_cache::<ClaudeUsage>("claude", None) {
         let mut state = state.lock().unwrap();
         state.claude.result = Some(result);
         state.claude.updated_at = Some(updated_at);
         state.claude.stale = true;
     }
-    prime_quota_cache(&mut state.lock().unwrap().antigravity, "antigravity");
-    prime_quota_cache(&mut state.lock().unwrap().cursor, "cursor");
-    prime_quota_cache(&mut state.lock().unwrap().grok, "grok");
     if let Some((result, updated_at)) =
         read_usage_cache::<CodexActivityUsage>("codex-activity", None)
     {
         let mut state = state.lock().unwrap();
         state.codex_activity.result = Some(result);
         state.codex_activity.updated_at = Some(updated_at);
-    }
-}
-
-fn prime_quota_cache(state: &mut crate::model::ProviderState<QuotaUsage>, provider: &str) {
-    if let Some((result, updated_at)) = read_usage_cache::<QuotaUsage>(provider, None) {
-        state.result = Some(result);
-        state.updated_at = Some(updated_at);
-        state.stale = true;
     }
 }
 
@@ -186,8 +175,8 @@ pub(crate) fn load_cached_codex(state: &Arc<Mutex<AppState>>, error: String) {
 
 pub(crate) fn load_cached_claude(state: &Arc<Mutex<AppState>>, error: String) {
     let cached =
-        read_usage_cache::<QuotaUsage>("claude", Some(env_u64("STATS_USAGE_CACHE_TTL", 600)))
-            .or_else(|| read_usage_cache::<QuotaUsage>("claude", None));
+        read_usage_cache::<ClaudeUsage>("claude", Some(env_u64("STATS_USAGE_CACHE_TTL", 600)))
+            .or_else(|| read_usage_cache::<ClaudeUsage>("claude", None));
     let mut state = state.lock().unwrap();
     if let Some((result, updated_at)) = cached {
         state.claude.result = Some(result);
@@ -196,24 +185,6 @@ pub(crate) fn load_cached_claude(state: &Arc<Mutex<AppState>>, error: String) {
         state.claude.stale = true;
     } else {
         state.claude.error = Some(error);
-    }
-}
-
-pub(crate) fn load_cached_quota(
-    state: &mut crate::model::ProviderState<QuotaUsage>,
-    provider: &str,
-    error: String,
-) {
-    let cached =
-        read_usage_cache::<QuotaUsage>(provider, Some(env_u64("STATS_USAGE_CACHE_TTL", 600)))
-            .or_else(|| read_usage_cache::<QuotaUsage>(provider, None));
-    if let Some((result, updated_at)) = cached {
-        state.result = Some(result);
-        state.updated_at = Some(updated_at);
-        state.error = None;
-        state.stale = true;
-    } else {
-        state.error = Some(error);
     }
 }
 

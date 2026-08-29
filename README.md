@@ -10,18 +10,15 @@ Stats is a lightweight dashboard for your Mac's system health and AI coding usag
 
 - CPU, RAM, GPU, storage, and network metrics
 - Amp subscription, Orb usage/runtime, and individual credit balance
-- Antigravity model-group quotas
 - Claude five-hour, weekly, and model-specific subscription quotas
 - Codex weekly quota and token activity
-- Cursor plan quota
-- Grok Build subscription quota
 - Four customizable world clocks
 
-Stats reads usage through installed, signed-in coding CLIs. It never stores provider credentials. Cursor's CLI supplies a short-lived access token in memory for its account usage request; the other integrations query their CLIs directly.
+Stats reads usage through the installed Amp, Claude, and Codex CLIs. It does not read or store their credentials.
 
 ## Install
 
-Stats requires macOS 11 or newer and currently provides prebuilt releases for Apple Silicon Macs. Enable only the providers whose signed-in CLIs are installed: [Amp](https://ampcode.com/), [Antigravity](https://antigravity.google/docs/cli/overview), [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://github.com/openai/codex), [Cursor](https://cursor.com/docs/cli/overview), and [Grok Build](https://docs.x.ai/build/overview).
+Stats requires macOS 11 or newer and currently provides prebuilt releases for Apple Silicon Macs. Enable only the providers whose signed-in CLIs are installed: [Amp](https://ampcode.com/), [Claude Code](https://code.claude.com/docs/en/overview), and [Codex](https://github.com/openai/codex).
 
 ### Homebrew (recommended)
 
@@ -81,13 +78,11 @@ Press `q` or Escape to quit. For a single, script-friendly snapshot, run:
 stats --once
 ```
 
-Run `stats --help` to see all CLI options. Enabled provider controls require their corresponding CLIs to be installed and signed in.
+Run `stats --help` to see all CLI options. Enabled Amp, Claude, and Codex controls require their corresponding CLIs to be available in `PATH`.
 
 Amp percentage meters show the remaining quota reported by `amp usage`. The non-Orb allowance is labeled with the subscription name, such as **Megawatt**, while **Amp Orbs** identifies the Orb allowance. Stats also shows renewal/reset text, Orb runtime, and the individual credit balance when Amp provides them. Orb runtime and credits are exact supplemental values rather than percentage charts because Amp does not report a corresponding limit for either value. Previously fetched Amp values show their last-updated time until a fresh CLI response is available.
 
 Claude meters show the remaining quota derived from the plan limits reported by `claude -p "/usage"`. Stats displays the five-hour and seven-day limits plus any model-specific weekly limit Claude reports. The command runs in safe mode without model turns, user customizations, or session persistence. Claude's machine-readable response currently wraps human-formatted limit rows, so Stats tolerates optional rows and keeps its last parsed values if a later response cannot be read.
-
-Antigravity quota uses the official `agy` CLI's embedded local quota service. Stats reuses a running `agy` process when possible; otherwise it briefly starts the CLI in a private terminal, reads the Gemini and Claude/GPT five-hour and weekly buckets, and exits it. Cursor quota uses `agent status --format json` for authentication and requests the current plan period from Cursor's dashboard service. Grok quota uses the official `grok agent stdio` protocol and its `x.ai/billing` extension. These three integrations are opt-in because their CLIs and account plans are not present on every machine. Their upstream quota protocols may change, so Stats preserves the last successful value when a refresh fails.
 
 The separate **Amp Activity** panel uses UTC-day ranges supported by `amp usage --details` to build a token calendar. A table compares covered/paid recorded cost, Orb runtime, model token usage, and source token usage across the most recent 1, 7, and 30 UTC days from the available cache. Its grid always fills the available width. Stats requests only the days needed by that visible grid, caches completed UTC days permanently, and refreshes only the current partial day. A persistent rolling limiter caps Stats at 40 account/activity lookups and 24 historical lookups per hour, leaving at least 20 of Amp's shared hourly allowance for other consumers. If Amp still returns a rate limit, Stats keeps cached data visible and pauses all lookups until Amp's retry window or the next locally calculated rolling-window slot. Amp and Codex activity remain separate datasets and charts.
 
@@ -159,9 +154,6 @@ amp_orbs = true
 amp_credits = true
 codex_quota = true
 claude_quota = true
-antigravity_quota = false
-cursor_quota = false
-grok_quota = false
 
 [section_display.amp_activity]
 heading = true
@@ -182,7 +174,6 @@ daily_activity = true
 codex_seconds = 60
 amp_seconds = 300
 claude_seconds = 300
-quota_seconds = 300
 storage_seconds = 300
 
 [desktop]
