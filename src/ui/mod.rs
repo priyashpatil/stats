@@ -27,6 +27,7 @@ const BAR_FILLED: &str = "━";
 const BAR_EMPTY: &str = "·";
 
 const CODEX_GUTTER_WIDTH: usize = 9;
+const AI_LABEL_GAP: usize = 1;
 
 #[derive(Debug, Clone)]
 struct AiQuotaRow {
@@ -657,7 +658,6 @@ fn collect_codex_ai_rows(
 
 fn render_ai_quota_rows(lines: &mut Vec<Line<'static>>, rows: Vec<AiQuotaRow>, width: usize) {
     const VALUE_WIDTH: usize = 9;
-    const LABEL_GAP: usize = 1;
     const VALUE_GAP: usize = 2;
     const TAIL_GAP: usize = 2;
 
@@ -667,7 +667,7 @@ fn render_ai_quota_rows(lines: &mut Vec<Line<'static>>, rows: Vec<AiQuotaRow>, w
         .map(|tail| tail.chars().count())
         .max()
         .unwrap_or_default();
-    let fixed_width = CODEX_GUTTER_WIDTH + LABEL_GAP + VALUE_GAP + VALUE_WIDTH;
+    let fixed_width = CODEX_GUTTER_WIDTH + AI_LABEL_GAP + VALUE_GAP + VALUE_WIDTH;
     let available = width.saturating_sub(fixed_width);
     let show_tail = tail_width > 0 && available >= 4 + TAIL_GAP + tail_width;
     let bar_width = if show_tail {
@@ -695,7 +695,7 @@ fn render_ai_quota_rows(lines: &mut Vec<Line<'static>>, rows: Vec<AiQuotaRow>, w
         let color = color_for_remaining(row.percent_left);
         let mut spans = vec![
             dim(fixed(&row.label, CODEX_GUTTER_WIDTH)),
-            Span::raw(" ".repeat(LABEL_GAP)),
+            Span::raw(" ".repeat(AI_LABEL_GAP)),
         ];
         if bar_width >= 4 {
             spans.extend(bar_spans(row.percent_left, bar_width, color));
@@ -721,6 +721,7 @@ fn ai_quota_tail(row: &AiQuotaRow) -> String {
 fn ai_status_row(label: &str, message: impl Into<String>, color: Color) -> Line<'static> {
     Line::from(vec![
         dim(fixed(label, CODEX_GUTTER_WIDTH)),
+        Span::raw(" ".repeat(AI_LABEL_GAP)),
         span(message.into(), color, true),
     ])
 }
@@ -1227,6 +1228,29 @@ mod tests {
         };
         assert_eq!(span_start(&lines[0], 5), span_start(&lines[1], 5));
         assert_eq!(span_start(&lines[0], 7), span_start(&lines[1], 7));
+    }
+
+    #[test]
+    fn aligns_ai_detail_values_with_quota_tracks() {
+        let mut quota_lines = Vec::new();
+        render_ai_quota_rows(
+            &mut quota_lines,
+            vec![AiQuotaRow {
+                label: "Megawatt".into(),
+                percent_left: 96.0,
+                reset: Some("21 Sep".into()),
+            }],
+            58,
+        );
+        let credits = ai_status_row("Credits", "$11.01 remaining", Color::Green);
+        let span_start = |line: &Line<'_>, index: usize| {
+            line.spans[..index]
+                .iter()
+                .map(|span| span.content.chars().count())
+                .sum::<usize>()
+        };
+
+        assert_eq!(span_start(&quota_lines[0], 2), span_start(&credits, 2));
     }
 
     #[test]
