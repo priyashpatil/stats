@@ -23,7 +23,7 @@ final class AboutViewController: NSViewController {
     let versionLabel = NSTextField(labelWithString: "Version \(version)")
     versionLabel.textColor = .secondaryLabelColor
     let description = NSTextField(
-      wrappingLabelWithString: "A terminal dashboard for macOS system metrics and AI coding usage."
+      wrappingLabelWithString: "A terminal dashboard for macOS system metrics, Amp usage, and Codex usage."
     )
     description.alignment = .center
     description.textColor = .secondaryLabelColor

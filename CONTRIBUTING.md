@@ -15,7 +15,7 @@ Thanks for helping improve Stats. This guide covers the technical setup; the [RE
 - Rust 1.85 or newer with Cargo, rustfmt, and Clippy
 - Swift 6.1 or newer for the native app
 - macOS for building and running the native app
-- Amp, Claude Code, and Codex installed and signed in for exercising their usage integrations
+- Amp and Codex installed and signed in for exercising their usage integrations
 
 ## Set up the repository
 

@@ -129,23 +129,6 @@ struct StatsConfigTests {
     #expect(store.config.sectionDisplay.system.hasEnabledOption == false)
   }
 
-  @Test("Config created before Claude integration remains compatible")
-  func preClaudeConfigRemainsCompatible() throws {
-    let fixture = try fixture()
-    defer { fixture.cleanup() }
-    try writeConfig(
-      validConfig()
-        .replacingOccurrences(of: "    claude_quota = true\n", with: "")
-        .replacingOccurrences(of: "    claude_seconds = 300\n", with: ""),
-      to: fixture.url
-    )
-
-    let store = try StatsConfigStore(url: fixture.url)
-
-    #expect(store.config.sectionDisplay.ai.claudeQuota == false)
-    #expect(store.config.refresh.claudeSeconds == 300)
-  }
-
   @Test("App updates preserve edits made directly to the file")
   func appUpdatesPreserveExternalEdits() throws {
     let fixture = try fixture()
@@ -258,7 +241,6 @@ struct StatsConfigTests {
     amp_orbs = true
     amp_credits = true
     codex_quota = true
-    claude_quota = true
 
     [section_display.amp_activity]
     heading = true
@@ -278,7 +260,6 @@ struct StatsConfigTests {
     [refresh]
     codex_seconds = 60
     amp_seconds = 300
-    claude_seconds = 300
     storage_seconds = 300
 
     [desktop]

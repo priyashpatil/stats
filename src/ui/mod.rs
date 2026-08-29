@@ -44,8 +44,7 @@ fn equal_column_widths(width: usize, count: usize) -> Vec<usize> {
 }
 
 use crate::model::{
-    AmpActivityUsage, AmpUsage, AppState, ClaudeUsage, Clock, CodexActivityUsage, ProviderState,
-    SystemMetrics,
+    AmpActivityUsage, AmpUsage, AppState, Clock, CodexActivityUsage, ProviderState, SystemMetrics,
 };
 use crate::providers::codex::{codex_weekly_window, left_percent, ordered_buckets};
 
@@ -242,14 +241,7 @@ fn stats_lines(
         render_system(&mut lines, &state.system, &display.system, width);
     }
     if sections.ai {
-        render_ai_quotas(
-            &mut lines,
-            &state.amp,
-            &state.claude,
-            &state.codex,
-            &display.ai,
-            width,
-        );
+        render_ai_quotas(&mut lines, &state.amp, &state.codex, &display.ai, width);
     }
     render_activity_sections(
         &mut lines,
@@ -415,7 +407,6 @@ fn render_system(
 fn render_ai_quotas(
     lines: &mut Vec<Line<'static>>,
     amp: &ProviderState<AmpUsage>,
-    claude: &ProviderState<ClaudeUsage>,
     codex: &ProviderState<Value>,
     display: &AiDisplayConfig,
     width: usize,
@@ -429,9 +420,6 @@ fn render_ai_quotas(
     let mut details = Vec::new();
     if display.amp_plan || display.amp_orbs || display.amp_credits {
         collect_amp_ai_rows(&mut rows, &mut statuses, &mut details, amp, display);
-    }
-    if display.claude_quota {
-        collect_claude_ai_rows(&mut rows, &mut statuses, claude);
     }
     if display.codex_quota {
         collect_codex_ai_rows(&mut rows, &mut statuses, codex);
@@ -453,14 +441,13 @@ fn render_ai_at(
     lines: &mut Vec<Line<'static>>,
     amp: &ProviderState<AmpUsage>,
     amp_activity: &ProviderState<AmpActivityUsage>,
-    claude: &ProviderState<ClaudeUsage>,
     codex: &ProviderState<Value>,
     codex_activity: &ProviderState<CodexActivityUsage>,
     width: usize,
     today: NaiveDate,
 ) {
     let display = SectionDisplayConfig::default();
-    render_ai_quotas(lines, amp, claude, codex, &display.ai, width);
+    render_ai_quotas(lines, amp, codex, &display.ai, width);
     render_activity_sections(
         lines,
         amp_activity,
@@ -666,50 +653,6 @@ fn collect_codex_ai_rows(
             });
         }
     }
-}
-
-fn collect_claude_ai_rows(
-    rows: &mut Vec<AiQuotaRow>,
-    statuses: &mut Vec<Line<'static>>,
-    claude: &ProviderState<ClaudeUsage>,
-) {
-    if let Some(error) = &claude.error {
-        statuses.push(ai_status_row(
-            "Claude",
-            format!("Error: {error}"),
-            Color::Red,
-        ));
-        return;
-    }
-    let Some(result) = &claude.result else {
-        statuses.push(ai_status_row(
-            "Claude",
-            "Loading Claude usage status...",
-            Color::Yellow,
-        ));
-        return;
-    };
-    if claude.stale {
-        let updated = claude
-            .updated_at
-            .as_ref()
-            .map(|time| time.format("%-d %b, %-I:%M%P").to_string())
-            .unwrap_or_else(|| "unknown".into());
-        statuses.push(ai_status_row(
-            "Claude",
-            format!("Last updated {updated}"),
-            Color::Yellow,
-        ));
-    }
-    rows.extend(result.limits.iter().map(|limit| AiQuotaRow {
-        label: limit.label.clone(),
-        percent_left: (100.0 - limit.used_percent).clamp(0.0, 100.0),
-        reset: limit.reset.as_deref().map(claude_compact_reset_label),
-    }));
-}
-
-fn claude_compact_reset_label(reset: &str) -> String {
-    reset.split(" (").next().unwrap_or(reset).to_string()
 }
 
 fn render_ai_quota_rows(lines: &mut Vec<Line<'static>>, rows: Vec<AiQuotaRow>, width: usize) {
@@ -943,8 +886,6 @@ pub(crate) fn print_once(
         let ready = {
             let state = state.lock().unwrap();
             (!display.amp_ai_needed(sections) || provider_ready_for_once(&state.amp, &started_at))
-                && (!display.claude_ai_needed(sections)
-                    || provider_ready_for_once(&state.claude, &started_at))
                 && (!display.codex_ai_needed(sections)
                     || provider_ready_for_once(&state.codex, &started_at))
         };
@@ -995,11 +936,6 @@ pub(crate) fn print_once(
                 println!("{line}");
             }
         }
-        if display.ai.claude_quota {
-            for line in claude_once_lines(&state.claude) {
-                println!("{line}");
-            }
-        }
         if display.ai.codex_quota
             && let Some(error) = &state.codex.error
         {
@@ -1025,34 +961,6 @@ pub(crate) fn print_once(
             }
         }
     }
-}
-
-fn claude_once_lines(state: &ProviderState<ClaudeUsage>) -> Vec<String> {
-    if let Some(error) = &state.error {
-        return vec![format!("Claude error: {error}")];
-    }
-    let Some(usage) = &state.result else {
-        return Vec::new();
-    };
-    let mut lines = Vec::new();
-    if state.stale {
-        let updated = state
-            .updated_at
-            .as_ref()
-            .map(|time| time.format("%-d %b, %-I:%M%P").to_string())
-            .unwrap_or_else(|| "unknown".into());
-        lines.push(format!("Claude usage last updated {updated}"));
-    }
-    lines.extend(usage.limits.iter().map(|limit| {
-        let percent_left = (100.0 - limit.used_percent).clamp(0.0, 100.0);
-        let reset = limit
-            .reset
-            .as_deref()
-            .map(|reset| format!(" · resets {reset}"))
-            .unwrap_or_default();
-        format!("{} {percent_left}% remaining{reset}", limit.label)
-    }));
-    lines
 }
 
 fn amp_once_lines(state: &ProviderState<AmpUsage>, display: &AiDisplayConfig) -> Vec<String> {
@@ -1412,7 +1320,6 @@ mod tests {
                 amp_orbs: true,
                 amp_credits: false,
                 codex_quota: false,
-                claude_quota: false,
             },
             ..SectionDisplayConfig::default()
         };
@@ -1488,7 +1395,6 @@ mod tests {
             &mut lines,
             &amp,
             &ProviderState::default(),
-            &ProviderState::default(),
             &codex,
             &activity,
             58,
@@ -1563,36 +1469,5 @@ mod tests {
         );
         assert_eq!(lines[2], "Amp Orbs 64.25% remaining · 12m3s runtime");
         assert_eq!(lines[3], "Amp credits $2.50 remaining");
-    }
-
-    #[test]
-    fn renders_claude_limits_as_remaining_quota() {
-        let claude = ProviderState {
-            result: Some(ClaudeUsage {
-                limits: vec![
-                    crate::model::ClaudeLimit {
-                        label: "Claude 5h".into(),
-                        used_percent: 8.0,
-                        reset: Some("Aug 25, 2:29pm (America/Los_Angeles)".into()),
-                    },
-                    crate::model::ClaudeLimit {
-                        label: "Claude 7d".into(),
-                        used_percent: 85.0,
-                        reset: None,
-                    },
-                ],
-            }),
-            ..ProviderState::default()
-        };
-        let mut rows = Vec::new();
-        let mut statuses = Vec::new();
-
-        collect_claude_ai_rows(&mut rows, &mut statuses, &claude);
-
-        assert!(statuses.is_empty());
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].percent_left, 92.0);
-        assert_eq!(rows[0].reset.as_deref(), Some("Aug 25, 2:29pm"));
-        assert_eq!(rows[1].percent_left, 15.0);
     }
 }
