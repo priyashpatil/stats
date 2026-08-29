@@ -1,40 +1,26 @@
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
 
-use chrono::Local;
 use regex::Regex;
 use serde_json::Value;
 
-use crate::cache::{load_cached_claude, write_usage_cache};
 use crate::model::{AppState, QuotaLimit, QuotaUsage};
-use crate::worker::sleep_stop;
+use crate::providers::spawn_quota_refresh;
 
 pub(crate) fn spawn_refresh_claude(
     state: &Arc<Mutex<AppState>>,
     stop: &Arc<AtomicBool>,
     interval: u64,
 ) {
-    let state = Arc::clone(state);
-    let stop = Arc::clone(stop);
-    thread::spawn(move || {
-        while !stop.load(Ordering::Relaxed) {
-            match read_claude_usage() {
-                Ok(result) => {
-                    write_usage_cache("claude", &result);
-                    let mut guard = state.lock().unwrap();
-                    guard.claude.result = Some(result);
-                    guard.claude.error = None;
-                    guard.claude.updated_at = Some(Local::now());
-                    guard.claude.stale = false;
-                }
-                Err(error) => load_cached_claude(&state, error),
-            }
-            sleep_stop(&stop, Duration::from_secs(interval));
-        }
-    });
+    spawn_quota_refresh(
+        state,
+        stop,
+        interval,
+        "claude",
+        |state| &mut state.claude,
+        read_claude_usage,
+    );
 }
 
 fn read_claude_usage() -> Result<QuotaUsage, String> {

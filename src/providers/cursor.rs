@@ -1,17 +1,15 @@
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use chrono::Local;
 use serde_json::Value;
 
-use crate::cache::{load_cached_quota, write_usage_cache};
 use crate::model::{AppState, QuotaLimit, QuotaUsage};
-use crate::worker::sleep_stop;
+use crate::providers::spawn_quota_refresh;
 
 pub(crate) fn executable() -> Option<PathBuf> {
     let candidates = ["agent", "cursor-agent"];
@@ -35,24 +33,14 @@ pub(crate) fn spawn_refresh_cursor(
     stop: &Arc<AtomicBool>,
     interval: u64,
 ) {
-    let state = Arc::clone(state);
-    let stop = Arc::clone(stop);
-    thread::spawn(move || {
-        while !stop.load(Ordering::Relaxed) {
-            match read_usage() {
-                Ok(result) => {
-                    write_usage_cache("cursor", &result);
-                    let mut guard = state.lock().unwrap();
-                    guard.cursor.result = Some(result);
-                    guard.cursor.error = None;
-                    guard.cursor.updated_at = Some(Local::now());
-                    guard.cursor.stale = false;
-                }
-                Err(error) => load_cached_quota(&mut state.lock().unwrap().cursor, "cursor", error),
-            }
-            sleep_stop(&stop, Duration::from_secs(interval));
-        }
-    });
+    spawn_quota_refresh(
+        state,
+        stop,
+        interval,
+        "cursor",
+        |state| &mut state.cursor,
+        read_usage,
+    );
 }
 
 fn read_usage() -> Result<QuotaUsage, String> {

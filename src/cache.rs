@@ -184,37 +184,9 @@ pub(crate) fn load_cached_codex(state: &Arc<Mutex<AppState>>, error: String) {
     }
 }
 
-pub(crate) fn load_cached_claude(state: &Arc<Mutex<AppState>>, error: String) {
-    let cached =
-        read_usage_cache::<QuotaUsage>("claude", Some(env_u64("STATS_USAGE_CACHE_TTL", 600)))
-            .or_else(|| read_usage_cache::<QuotaUsage>("claude", None));
-    let mut state = state.lock().unwrap();
-    if let Some((result, updated_at)) = cached {
-        state.claude.result = Some(result);
-        state.claude.updated_at = Some(updated_at);
-        state.claude.error = None;
-        state.claude.stale = true;
-    } else {
-        state.claude.error = Some(error);
-    }
-}
-
-pub(crate) fn load_cached_quota(
-    state: &mut crate::model::ProviderState<QuotaUsage>,
-    provider: &str,
-    error: String,
-) {
-    let cached =
-        read_usage_cache::<QuotaUsage>(provider, Some(env_u64("STATS_USAGE_CACHE_TTL", 600)))
-            .or_else(|| read_usage_cache::<QuotaUsage>(provider, None));
-    if let Some((result, updated_at)) = cached {
-        state.result = Some(result);
-        state.updated_at = Some(updated_at);
-        state.error = None;
-        state.stale = true;
-    } else {
-        state.error = Some(error);
-    }
+pub(crate) fn read_cached_quota(provider: &str) -> Option<(QuotaUsage, DateTime<Local>)> {
+    read_usage_cache(provider, Some(env_u64("STATS_USAGE_CACHE_TTL", 600)))
+        .or_else(|| read_usage_cache(provider, None))
 }
 
 pub(crate) fn load_cached_codex_activity(state: &Arc<Mutex<AppState>>, error: String) {

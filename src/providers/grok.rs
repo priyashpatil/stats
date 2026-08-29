@@ -1,17 +1,15 @@
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::Duration;
 
-use chrono::Local;
 use serde_json::{Value, json};
 
-use crate::cache::{load_cached_quota, write_usage_cache};
 use crate::model::{AppState, QuotaLimit, QuotaUsage};
-use crate::worker::sleep_stop;
+use crate::providers::spawn_quota_refresh;
 
 pub(crate) fn executable() -> Option<PathBuf> {
     resolve(
@@ -26,27 +24,18 @@ pub(crate) fn spawn_refresh_grok(
     stop: &Arc<AtomicBool>,
     interval: u64,
 ) {
-    let state = Arc::clone(state);
-    let stop = Arc::clone(stop);
-    thread::spawn(move || {
-        while !stop.load(Ordering::Relaxed) {
-            match executable()
+    spawn_quota_refresh(
+        state,
+        stop,
+        interval,
+        "grok",
+        |state| &mut state.grok,
+        || {
+            executable()
                 .ok_or_else(|| "grok not found".to_string())
                 .and_then(read_usage)
-            {
-                Ok(result) => {
-                    write_usage_cache("grok", &result);
-                    let mut guard = state.lock().unwrap();
-                    guard.grok.result = Some(result);
-                    guard.grok.error = None;
-                    guard.grok.updated_at = Some(Local::now());
-                    guard.grok.stale = false;
-                }
-                Err(error) => load_cached_quota(&mut state.lock().unwrap().grok, "grok", error),
-            }
-            sleep_stop(&stop, Duration::from_secs(interval));
-        }
-    });
+        },
+    );
 }
 
 fn read_usage(executable: PathBuf) -> Result<QuotaUsage, String> {
