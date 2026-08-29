@@ -1,6 +1,6 @@
 [package]
 name = "stats"
-version = "2026.8.6"
+version = "2026.8.7"
 edition = "2024"
 rust-version = "1.85"
 description = "A terminal dashboard for system metrics and AI coding usage"
