@@ -297,51 +297,48 @@ fn amp_detail_rows(
     display: &AmpActivityDisplayConfig,
 ) -> Vec<Line<'static>> {
     let periods = [1_u64, 7, AMP_DETAIL_DAYS];
-    let mut rows = Vec::new();
+    let mut blocks = Vec::new();
     if display.usage_summary {
-        rows.push(amp_table_row(
-            "Metric",
-            ["1D".into(), "7D".into(), "30D".into()],
-            width,
-        ));
-        rows.push(amp_table_row(
-            "Covered",
-            periods.map(|days| {
-                format!(
-                    "${:.2}",
-                    period_buckets(activity, utc_today, days)
-                        .map(|bucket| bucket.covered_cost)
-                        .sum::<f64>()
-                )
-            }),
-            width,
-        ));
-        rows.push(amp_table_row(
-            "Paid",
-            periods.map(|days| {
-                format!(
-                    "${:.2}",
-                    period_buckets(activity, utc_today, days)
-                        .map(|bucket| bucket.paid_cost)
-                        .sum::<f64>()
-                )
-            }),
-            width,
-        ));
-        rows.push(amp_table_row(
-            "Orb time",
-            periods.map(|days| {
-                compact_duration(
-                    period_buckets(activity, utc_today, days)
-                        .map(|bucket| bucket.orb_runtime_millis)
-                        .sum(),
-                )
-            }),
-            width,
-        ));
+        blocks.push(vec![
+            amp_table_row(
+                "Covered",
+                periods.map(|days| {
+                    format!(
+                        "${:.2}",
+                        period_buckets(activity, utc_today, days)
+                            .map(|bucket| bucket.covered_cost)
+                            .sum::<f64>()
+                    )
+                }),
+                width,
+            ),
+            amp_table_row(
+                "Paid",
+                periods.map(|days| {
+                    format!(
+                        "${:.2}",
+                        period_buckets(activity, utc_today, days)
+                            .map(|bucket| bucket.paid_cost)
+                            .sum::<f64>()
+                    )
+                }),
+                width,
+            ),
+            amp_table_row(
+                "Orb time",
+                periods.map(|days| {
+                    compact_duration(
+                        period_buckets(activity, utc_today, days)
+                            .map(|bucket| bucket.orb_runtime_millis)
+                            .sum(),
+                    )
+                }),
+                width,
+            ),
+        ]);
     }
     if display.models {
-        rows.extend(category_table_rows(
+        blocks.push(category_table_rows(
             activity,
             AmpCategoryKind::Models,
             width,
@@ -349,12 +346,29 @@ fn amp_detail_rows(
         ));
     }
     if display.sources {
-        rows.extend(category_table_rows(
+        blocks.push(category_table_rows(
             activity,
             AmpCategoryKind::Sources,
             width,
             utc_today,
         ));
+    }
+    let mut rows = Vec::new();
+    for (index, block) in blocks
+        .into_iter()
+        .filter(|block| !block.is_empty())
+        .enumerate()
+    {
+        if index == 0 {
+            rows.push(amp_table_row(
+                "",
+                ["1D".into(), "7D".into(), "30D".into()],
+                width,
+            ));
+        } else {
+            rows.push(Line::default());
+        }
+        rows.extend(block);
     }
     rows
 }
@@ -1066,6 +1080,66 @@ mod tests {
     }
 
     #[test]
+    fn renders_amp_periods_without_metric_label_and_separates_detail_groups() {
+        let usage = AmpActivityUsage {
+            daily_usage_buckets: vec![crate::model::AmpDailyUsageBucket {
+                date: "2026-08-02".into(),
+                models: vec![AmpTokenCategory {
+                    label: "Test model".into(),
+                    tokens: 10,
+                }],
+                sources: vec![AmpTokenCategory {
+                    label: "Test source".into(),
+                    tokens: 10,
+                }],
+                ..crate::model::AmpDailyUsageBucket::default()
+            }],
+        };
+        let models_only = amp_detail_rows(
+            &usage,
+            40,
+            date("2026-08-02"),
+            &AmpActivityDisplayConfig {
+                usage_summary: false,
+                sources: false,
+                ..AmpActivityDisplayConfig::default()
+            },
+        )
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>();
+
+        assert!(!models_only[0].contains("Metric"));
+        assert!(models_only[0].contains("1D"));
+        assert!(models_only[0].contains("7D"));
+        assert!(models_only[0].contains("30D"));
+        assert!(models_only[1].starts_with("Models"));
+        assert!(models_only[2].starts_with("Test model"));
+
+        let with_summary = amp_detail_rows(
+            &usage,
+            40,
+            date("2026-08-02"),
+            &AmpActivityDisplayConfig::default(),
+        )
+        .iter()
+        .map(line_text)
+        .collect::<Vec<_>>();
+        let models_index = with_summary
+            .iter()
+            .position(|line| line.starts_with("Models"))
+            .unwrap();
+        let sources_index = with_summary
+            .iter()
+            .position(|line| line.starts_with("Sources"))
+            .unwrap();
+
+        assert!(with_summary[1].starts_with("Covered"));
+        assert!(with_summary[models_index - 1].is_empty());
+        assert!(with_summary[sources_index - 1].is_empty());
+    }
+
+    #[test]
     fn renders_cached_amp_activity_and_aggregate_details() {
         let state = ProviderState {
             result: Some(AmpActivityUsage {
@@ -1161,7 +1235,7 @@ mod tests {
 
         assert_eq!(sync, "Amp Code activity history sync completes in ~4h 53m");
         assert!(!text.contains("activity history sync"));
-        assert!(text.contains("Metric"));
+        assert!(!text.contains("Metric"));
         assert!(text.contains("1D"));
         assert!(text.contains("7D"));
         assert!(text.contains("30D"));
