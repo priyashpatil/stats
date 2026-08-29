@@ -128,6 +128,7 @@ fn run_stats(args: Args) -> Result<AppOutcome, String> {
                 &args.clocks,
                 &args.sections,
                 &args.section_display,
+                args.color_theme,
                 args.show_scrollbar,
                 &args.config_path,
             )

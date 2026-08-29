@@ -205,6 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       selectedClockChoices: configStore.config.clocks,
       launchesAtLogin: launchAtLoginController.isEnabled,
       fontSize: configStore.config.desktop.fontSize,
+      colorTheme: configStore.config.desktop.colorTheme,
       showsScrollbar: configStore.config.desktop.showScrollbar,
       sections: configStore.config.sections,
       sectionDisplay: configStore.config.sectionDisplay,
@@ -219,6 +220,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
           self.terminal?.font = self.terminalFont(size: fontSize)
         } catch {
           self.showConfigErrorAlert(error)
+        }
+      },
+      onColorThemeChange: { [weak self] colorTheme in
+        guard let self else { return false }
+        do {
+          try configStore.saveColorTheme(colorTheme)
+          return true
+        } catch {
+          self.showConfigErrorAlert(error)
+          return false
         }
       },
       onShowScrollbarChange: { [weak self] showScrollbar in

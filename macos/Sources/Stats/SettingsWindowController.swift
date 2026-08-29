@@ -21,10 +21,12 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
   private var selectedClockChoices: [ClockChoice]
   private var selectedSections: SectionsConfig
   private var selectedSectionDisplay: SectionDisplayConfig
+  private var selectedColorTheme: ColorTheme
   private var sectionButtons: [String: NSButton] = [:]
   private var clockPickers: [NSControl] = []
   private let onLaunchAtLoginChange: (Bool) -> Bool
   private let onFontSizeChange: (Int) -> Void
+  private let onColorThemeChange: (ColorTheme) -> Bool
   private let onShowScrollbarChange: (Bool) -> Bool
   private let onSectionSettingsChange: (SectionsConfig, SectionDisplayConfig) -> Bool
   private let onClockChoicesChange: ([ClockChoice]) -> Void
@@ -34,12 +36,14 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     selectedClockChoices: [ClockChoice],
     launchesAtLogin: Bool,
     fontSize: Int,
+    colorTheme: ColorTheme,
     showsScrollbar: Bool,
     sections: SectionsConfig,
     sectionDisplay: SectionDisplayConfig,
     configPath: String,
     onLaunchAtLoginChange: @escaping (Bool) -> Bool,
     onFontSizeChange: @escaping (Int) -> Void,
+    onColorThemeChange: @escaping (ColorTheme) -> Bool,
     onShowScrollbarChange: @escaping (Bool) -> Bool,
     onSectionSettingsChange: @escaping (SectionsConfig, SectionDisplayConfig) -> Bool,
     onClockChoicesChange: @escaping ([ClockChoice]) -> Void,
@@ -48,8 +52,10 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     self.selectedClockChoices = selectedClockChoices
     self.selectedSections = sections
     self.selectedSectionDisplay = sectionDisplay
+    self.selectedColorTheme = colorTheme
     self.onLaunchAtLoginChange = onLaunchAtLoginChange
     self.onFontSizeChange = onFontSizeChange
+    self.onColorThemeChange = onColorThemeChange
     self.onShowScrollbarChange = onShowScrollbarChange
     self.onSectionSettingsChange = onSectionSettingsChange
     self.onClockChoicesChange = onClockChoicesChange
@@ -68,6 +74,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
       selectedClockChoices: selectedClockChoices,
       launchesAtLogin: launchesAtLogin,
       fontSize: fontSize,
+      colorTheme: colorTheme,
       showsScrollbar: showsScrollbar,
       sections: sections,
       sectionDisplay: sectionDisplay,
@@ -83,6 +90,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     selectedClockChoices: [ClockChoice],
     launchesAtLogin: Bool,
     fontSize: Int,
+    colorTheme: ColorTheme,
     showsScrollbar: Bool,
     sections: SectionsConfig,
     sectionDisplay: SectionDisplayConfig,
@@ -92,6 +100,7 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
       generalViewController(
         launchesAtLogin: launchesAtLogin,
         fontSize: fontSize,
+        colorTheme: colorTheme,
         showsScrollbar: showsScrollbar,
         configPath: configPath
       ),
@@ -300,16 +309,44 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
   private func generalViewController(
     launchesAtLogin: Bool,
     fontSize: Int,
+    colorTheme: ColorTheme,
     showsScrollbar: Bool,
     configPath: String
   ) -> NSViewController {
-    let controller = settingsPane(height: 500)
+    let controller = settingsPane(height: 590)
     let title = NSTextField(labelWithString: "General")
     title.font = .systemFont(ofSize: 22, weight: .semibold)
     let subtitle = NSTextField(
-      wrappingLabelWithString: "Customize the terminal and choose how Stats starts on your Mac."
+      wrappingLabelWithString: "Customize the dashboard and choose how Stats starts on your Mac."
     )
     subtitle.textColor = .secondaryLabelColor
+
+    let appearanceHeading = NSTextField(labelWithString: "Appearance")
+    appearanceHeading.font = .systemFont(ofSize: 13, weight: .semibold)
+    let colorThemeLabel = NSTextField(labelWithString: "Color theme:")
+    let colorThemePopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    for theme in ColorTheme.allCases {
+      colorThemePopup.addItem(withTitle: theme.title)
+    }
+    if let index = ColorTheme.allCases.firstIndex(of: colorTheme) {
+      colorThemePopup.selectItem(at: index)
+    }
+    colorThemePopup.target = self
+    colorThemePopup.action = #selector(colorThemeChanged(_:))
+    let colorThemeRow = NSStackView(views: [colorThemeLabel, colorThemePopup])
+    colorThemeRow.orientation = .horizontal
+    colorThemeRow.alignment = .centerY
+    colorThemeRow.spacing = 12
+    let colorThemeHelp = NSTextField(
+      wrappingLabelWithString: "Choose coordinated colors for the entire dashboard."
+    )
+    colorThemeHelp.textColor = .secondaryLabelColor
+    let appearanceSection = NSStackView(
+      views: [appearanceHeading, colorThemeRow, colorThemeHelp]
+    )
+    appearanceSection.orientation = .vertical
+    appearanceSection.alignment = .leading
+    appearanceSection.spacing = 8
 
     let terminalHeading = NSTextField(labelWithString: "Terminal")
     terminalHeading.font = .systemFont(ofSize: 13, weight: .semibold)
@@ -379,13 +416,17 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     startupSection.spacing = 8
 
     let stack = NSStackView(
-      views: [title, subtitle, terminalSection, configSection, separator, startupSection]
+      views: [
+        title, subtitle, appearanceSection, terminalSection, configSection, separator,
+        startupSection,
+      ]
     )
     stack.orientation = .vertical
     stack.alignment = .leading
     stack.spacing = 8
     stack.setCustomSpacing(6, after: title)
     stack.setCustomSpacing(24, after: subtitle)
+    stack.setCustomSpacing(20, after: appearanceSection)
     stack.setCustomSpacing(20, after: terminalSection)
     stack.setCustomSpacing(20, after: configSection)
     stack.setCustomSpacing(20, after: separator)
@@ -574,6 +615,18 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
 
   @objc private func fontSizeChanged(_ sender: NSPopUpButton) {
     onFontSizeChange(sender.selectedTag())
+  }
+
+  @objc private func colorThemeChanged(_ sender: NSPopUpButton) {
+    let themes = ColorTheme.allCases
+    let selectedIndex = sender.indexOfSelectedItem
+    guard themes.indices.contains(selectedIndex) else { return }
+    let requested = themes[selectedIndex]
+    if onColorThemeChange(requested) {
+      selectedColorTheme = requested
+    } else if let previousIndex = themes.firstIndex(of: selectedColorTheme) {
+      sender.selectItem(at: previousIndex)
+    }
   }
 
   @objc private func showScrollbarChanged(_ sender: NSButton) {

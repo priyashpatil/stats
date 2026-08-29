@@ -358,27 +358,51 @@ struct RefreshConfig: Codable {
   }
 }
 
+enum ColorTheme: String, Codable, CaseIterable {
+  case aurora
+  case emerald
+  case ocean
+  case sunset
+  case monochrome
+
+  var title: String {
+    switch self {
+    case .aurora: "Aurora"
+    case .emerald: "Emerald"
+    case .ocean: "Ocean"
+    case .sunset: "Sunset"
+    case .monochrome: "Monochrome"
+    }
+  }
+}
+
 struct DesktopConfig: Codable {
   var fontSize: Int
   var showScrollbar: Bool
+  var colorTheme: ColorTheme
 
   init(
     fontSize: Int = StatsConfigStore.defaultFontSize,
-    showScrollbar: Bool = false
+    showScrollbar: Bool = false,
+    colorTheme: ColorTheme = .aurora
   ) {
     self.fontSize = fontSize
     self.showScrollbar = showScrollbar
+    self.colorTheme = colorTheme
   }
 
   enum CodingKeys: String, CodingKey {
     case fontSize = "font_size"
     case showScrollbar = "show_scrollbar"
+    case colorTheme = "color_theme"
   }
 
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     fontSize = try container.decode(Int.self, forKey: .fontSize)
     showScrollbar = try container.decode(Bool.self, forKey: .showScrollbar)
+    colorTheme = try container.decodeIfPresent(ColorTheme.self, forKey: .colorTheme)
+      ?? .aurora
   }
 }
 
@@ -439,6 +463,14 @@ final class StatsConfigStore {
   func saveShowScrollbar(_ showScrollbar: Bool) throws {
     var updated = try configForUpdate()
     updated.desktop.showScrollbar = showScrollbar
+    try Self.validate(updated)
+    try write(updated)
+    config = updated
+  }
+
+  func saveColorTheme(_ colorTheme: ColorTheme) throws {
+    var updated = try configForUpdate()
+    updated.desktop.colorTheme = colorTheme
     try Self.validate(updated)
     try write(updated)
     config = updated

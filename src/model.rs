@@ -5,7 +5,7 @@ use chrono::{DateTime, Local, NaiveDate};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::config::{SectionDisplayConfig, SectionsConfig};
+use crate::config::{ColorTheme, SectionDisplayConfig, SectionsConfig};
 
 pub(crate) struct Args {
     pub(crate) action: Action,
@@ -17,6 +17,7 @@ pub(crate) struct Args {
     pub(crate) clocks: Vec<Clock>,
     pub(crate) sections: SectionsConfig,
     pub(crate) section_display: SectionDisplayConfig,
+    pub(crate) color_theme: ColorTheme,
     pub(crate) show_scrollbar: bool,
     pub(crate) config_path: PathBuf,
 }

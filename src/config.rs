@@ -96,6 +96,19 @@ pub(crate) struct RefreshConfig {
 pub(crate) struct DesktopConfig {
     pub(crate) font_size: u64,
     pub(crate) show_scrollbar: bool,
+    #[serde(default)]
+    pub(crate) color_theme: ColorTheme,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ColorTheme {
+    #[default]
+    Aurora,
+    Emerald,
+    Ocean,
+    Sunset,
+    Monochrome,
 }
 
 impl Default for Config {
@@ -222,6 +235,7 @@ impl Default for DesktopConfig {
         Self {
             font_size: 15,
             show_scrollbar: false,
+            color_theme: ColorTheme::default(),
         }
     }
 }
@@ -416,6 +430,21 @@ mod tests {
         assert!(config.sections.amp_activity);
         assert_eq!(config.desktop.font_size, 15);
         assert!(!config.desktop.show_scrollbar);
+        assert_eq!(config.desktop.color_theme, ColorTheme::Aurora);
+    }
+
+    #[test]
+    fn version_two_config_without_color_theme_uses_aurora() {
+        let path = temporary_path("legacy-color-theme");
+        write(
+            &path,
+            &valid_config().replace("color_theme = \"aurora\"\n", ""),
+        );
+
+        let config = load(&path).unwrap();
+
+        assert_eq!(config.desktop.color_theme, ColorTheme::Aurora);
+        fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -536,7 +565,8 @@ mod tests {
                 .replace("codex_seconds = 60", "codex_seconds = 10")
                 .replace("amp_seconds = 300", "amp_seconds = 120")
                 .replace("storage_seconds = 300", "storage_seconds = 180")
-                .replace("font_size = 15", "font_size = 18"),
+                .replace("font_size = 15", "font_size = 18")
+                .replace("color_theme = \"aurora\"", "color_theme = \"sunset\""),
         );
 
         let config = load(&path).unwrap();
@@ -548,6 +578,21 @@ mod tests {
         assert_eq!(config.refresh.codex_seconds, 10);
         assert_eq!(config.desktop.font_size, 18);
         assert!(!config.desktop.show_scrollbar);
+        assert_eq!(config.desktop.color_theme, ColorTheme::Sunset);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn rejects_unknown_color_theme() {
+        let path = temporary_path("color-theme");
+        write(
+            &path,
+            &valid_config().replace("color_theme = \"aurora\"", "color_theme = \"custom\""),
+        );
+
+        let error = load(&path).unwrap_err();
+
+        assert!(error.contains("unknown variant `custom`"));
         fs::remove_file(path).unwrap();
     }
 
@@ -652,6 +697,7 @@ storage_seconds = 300
 [desktop]
 font_size = 15
 show_scrollbar = false
+color_theme = "aurora"
 "#
         .into()
     }

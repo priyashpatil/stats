@@ -45,6 +45,7 @@ struct StatsConfigTests {
     )
     try store.saveSectionSettings(sections, display: display)
     try store.saveFontSize(18)
+    try store.saveColorTheme(.sunset)
     try store.saveShowScrollbar(false)
 
     let restored = try StatsConfigStore(url: fixture.url)
@@ -52,13 +53,46 @@ struct StatsConfigTests {
     #expect(restored.config.sections == sections)
     #expect(restored.config.sectionDisplay == display)
     #expect(restored.config.desktop.fontSize == 18)
+    #expect(restored.config.desktop.colorTheme == .sunset)
     #expect(restored.config.desktop.showScrollbar == false)
     let contents = try String(contentsOf: fixture.url, encoding: .utf8)
     #expect(contents.contains("[[clocks]]"))
     #expect(contents.contains("amp_activity = false"))
     #expect(contents.contains("amp_credits = false"))
     #expect(contents.contains("font_size = 18"))
+    #expect(contents.contains("color_theme = \"sunset\""))
     #expect(contents.contains("show_scrollbar = false"))
+  }
+
+  @Test("Existing version two config defaults to the Aurora color theme")
+  func existingConfigDefaultsToAurora() throws {
+    let fixture = try fixture()
+    defer { fixture.cleanup() }
+    try writeConfig(
+      validConfig().replacingOccurrences(of: "color_theme = \"aurora\"\n", with: ""),
+      to: fixture.url
+    )
+
+    let store = try StatsConfigStore(url: fixture.url)
+
+    #expect(store.config.desktop.colorTheme == .aurora)
+  }
+
+  @Test("Unknown color theme is rejected")
+  func unknownColorThemeIsRejected() throws {
+    let fixture = try fixture()
+    defer { fixture.cleanup() }
+    try writeConfig(
+      validConfig().replacingOccurrences(
+        of: "color_theme = \"aurora\"",
+        with: "color_theme = \"custom\""
+      ),
+      to: fixture.url
+    )
+
+    #expect(throws: (any Error).self) {
+      try StatsConfigStore(url: fixture.url)
+    }
   }
 
   @Test("Version one config is rejected")
@@ -265,6 +299,7 @@ struct StatsConfigTests {
     [desktop]
     font_size = 15
     show_scrollbar = false
+    color_theme = "aurora"
     """
   }
 
