@@ -27,6 +27,81 @@ const BAR_FILLED: &str = "━";
 const BAR_EMPTY: &str = "·";
 
 const CODEX_GUTTER_WIDTH: usize = 9;
+const AI_LABEL_GAP: usize = 1;
+
+#[derive(Debug, Clone, Copy)]
+struct Theme {
+    heading: Color,
+    accent: Color,
+    activity: [Color; 4],
+}
+
+impl Theme {
+    fn new(color_theme: ColorTheme) -> Self {
+        match color_theme {
+            ColorTheme::Aurora => Self {
+                heading: Color::Rgb(196, 181, 253),
+                accent: Color::Rgb(103, 232, 249),
+                activity: [
+                    Color::Rgb(79, 131, 204),
+                    Color::Rgb(74, 159, 193),
+                    Color::Rgb(76, 186, 180),
+                    Color::Rgb(98, 214, 189),
+                ],
+            },
+            ColorTheme::Emerald => Self {
+                heading: Color::Rgb(134, 239, 172),
+                accent: Color::Rgb(93, 212, 138),
+                activity: [
+                    Color::Rgb(49, 147, 95),
+                    Color::Rgb(66, 173, 112),
+                    Color::Rgb(99, 201, 134),
+                    Color::Rgb(152, 231, 165),
+                ],
+            },
+            ColorTheme::Ocean => Self {
+                heading: Color::Rgb(147, 197, 253),
+                accent: Color::Rgb(96, 165, 250),
+                activity: [
+                    Color::Rgb(84, 131, 196),
+                    Color::Rgb(92, 147, 207),
+                    Color::Rgb(113, 172, 224),
+                    Color::Rgb(154, 199, 240),
+                ],
+            },
+            ColorTheme::Sunset => Self {
+                heading: Color::Rgb(253, 164, 175),
+                accent: Color::Rgb(251, 146, 60),
+                activity: [
+                    Color::Rgb(185, 107, 145),
+                    Color::Rgb(197, 104, 127),
+                    Color::Rgb(224, 120, 115),
+                    Color::Rgb(245, 158, 104),
+                ],
+            },
+            ColorTheme::Monochrome => Self {
+                heading: Color::Rgb(225, 231, 236),
+                accent: Color::Rgb(188, 197, 206),
+                activity: [
+                    Color::Rgb(124, 135, 148),
+                    Color::Rgb(154, 165, 177),
+                    Color::Rgb(188, 197, 206),
+                    Color::Rgb(225, 231, 236),
+                ],
+            },
+        }
+    }
+
+    fn activity(self, level: usize) -> Color {
+        self.activity[level.saturating_sub(1).min(3)]
+    }
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self::new(ColorTheme::default())
+    }
+}
 
 #[derive(Debug, Clone)]
 struct AiQuotaRow {
@@ -50,22 +125,50 @@ use crate::providers::codex::{codex_weekly_window, left_percent, ordered_buckets
 
 mod activity;
 use crate::config::{
-    AiDisplayConfig, ClocksDisplayConfig, SectionDisplayConfig, SectionsConfig, SystemDisplayConfig,
+    AiDisplayConfig, ClocksDisplayConfig, ColorTheme, SectionDisplayConfig, SectionsConfig,
+    SystemDisplayConfig,
 };
+use crate::model::Args;
 use activity::{
     amp_activity_history_days, amp_activity_sync_message, render_amp_activity,
     render_codex_activity,
 };
 
+#[derive(Clone, Copy)]
+struct Dashboard<'a> {
+    clocks: &'a [Clock],
+    sections: &'a SectionsConfig,
+    display: &'a SectionDisplayConfig,
+    theme: Theme,
+}
+
+impl<'a> Dashboard<'a> {
+    fn new(
+        clocks: &'a [Clock],
+        sections: &'a SectionsConfig,
+        display: &'a SectionDisplayConfig,
+        color_theme: ColorTheme,
+    ) -> Self {
+        Self {
+            clocks,
+            sections,
+            display,
+            theme: Theme::new(color_theme),
+        }
+    }
+}
+
 pub(crate) fn run_tui(
     state: &Arc<Mutex<AppState>>,
     stop: &Arc<AtomicBool>,
-    clocks: &[Clock],
-    sections: &SectionsConfig,
-    section_display: &SectionDisplayConfig,
-    show_scrollbar: bool,
-    config_path: &Path,
+    args: &Args,
 ) -> Result<bool, String> {
+    let dashboard = Dashboard::new(
+        &args.clocks,
+        &args.sections,
+        &args.section_display,
+        args.color_theme,
+    );
     enable_raw_mode().map_err(|err| err.to_string())?;
     let mut stdout = io::stdout();
     execute!(
@@ -85,7 +188,7 @@ pub(crate) fn run_tui(
     let mut scroll_offset = 0;
     let mut max_scroll = 0;
     let mut page_rows = 1;
-    let initial_config_revision = config_revision(config_path);
+    let initial_config_revision = config_revision(&args.config_path);
     let result = loop {
         let mut content_rows = 0;
         terminal
@@ -93,10 +196,8 @@ pub(crate) fn run_tui(
                 (content_rows, max_scroll, page_rows) = draw(
                     frame,
                     state,
-                    clocks,
-                    sections,
-                    section_display,
-                    show_scrollbar,
+                    dashboard,
+                    args.show_scrollbar,
                     &mut scroll_offset,
                 )
             })
@@ -149,7 +250,7 @@ pub(crate) fn run_tui(
         if stop.load(Ordering::Relaxed) {
             break Ok(false);
         }
-        if config_revision(config_path) != initial_config_revision {
+        if config_revision(&args.config_path) != initial_config_revision {
             stop.store(true, Ordering::Relaxed);
             break Ok(true);
         }
@@ -175,9 +276,7 @@ fn config_revision(path: &Path) -> Option<SystemTime> {
 fn draw(
     frame: &mut Frame,
     state: &Arc<Mutex<AppState>>,
-    clocks: &[Clock],
-    sections: &SectionsConfig,
-    section_display: &SectionDisplayConfig,
+    dashboard: Dashboard<'_>,
     show_scrollbar: bool,
     scroll_offset: &mut usize,
 ) -> (usize, usize, usize) {
@@ -188,19 +287,13 @@ fn draw(
     }
     let snapshot = {
         let mut state = state.lock().unwrap();
-        if sections.amp_activity {
+        if dashboard.sections.amp_activity {
             state.amp_activity_history_days =
                 amp_activity_history_days(content_area.width as usize, Utc::now().date_naive());
         }
         state.clone()
     };
-    let lines = stats_lines(
-        &snapshot,
-        clocks,
-        sections,
-        section_display,
-        content_area.width as usize,
-    );
+    let lines = stats_lines(&snapshot, dashboard, content_area.width as usize);
     let content_rows = lines.len();
     let page_rows = area.height as usize;
     let max_scroll = content_rows.saturating_sub(page_rows);
@@ -223,39 +316,51 @@ fn draw(
     (content_rows, max_scroll, page_rows.saturating_sub(1).max(1))
 }
 
-fn stats_lines(
-    state: &AppState,
-    clocks: &[Clock],
-    sections: &SectionsConfig,
-    display: &SectionDisplayConfig,
-    width: usize,
-) -> Vec<Line<'static>> {
+fn stats_lines(state: &AppState, dashboard: Dashboard<'_>, width: usize) -> Vec<Line<'static>> {
+    let Dashboard {
+        clocks,
+        sections,
+        display,
+        theme,
+    } = dashboard;
     let mut lines = Vec::new();
     if sections.amp_activity && display.amp_activity.sync_alerts {
-        render_alerts(&mut lines, state, width, Utc::now().date_naive());
+        render_alerts(&mut lines, state, width, Utc::now().date_naive(), theme);
     }
     if sections.clocks {
-        render_clocks(&mut lines, clocks, &display.clocks, width);
+        render_clocks(&mut lines, clocks, &display.clocks, width, theme);
     }
     if sections.system {
-        render_system(&mut lines, &state.system, &display.system, width);
+        render_system(&mut lines, &state.system, &display.system, width, theme);
     }
     if sections.ai {
-        render_ai_quotas(&mut lines, &state.amp, &state.codex, &display.ai, width);
+        render_ai_quotas(
+            &mut lines,
+            &state.amp,
+            &state.codex,
+            &display.ai,
+            width,
+            theme,
+        );
     }
     render_activity_sections(
         &mut lines,
         &state.amp_activity,
         &state.codex_activity,
-        sections,
-        display,
+        dashboard,
         width,
         Utc::now().date_naive(),
     );
     lines
 }
 
-fn render_alerts(lines: &mut Vec<Line<'static>>, state: &AppState, width: usize, today: NaiveDate) {
+fn render_alerts(
+    lines: &mut Vec<Line<'static>>,
+    state: &AppState,
+    width: usize,
+    today: NaiveDate,
+    theme: Theme,
+) {
     let alerts = amp_activity_sync_message(&state.amp_activity, width, today)
         .map(|message| (message, Color::Yellow))
         .into_iter()
@@ -263,7 +368,7 @@ fn render_alerts(lines: &mut Vec<Line<'static>>, state: &AppState, width: usize,
     if alerts.is_empty() {
         return;
     }
-    section(lines, "Alerts", "", width);
+    section(lines, "Alerts", "", width, theme);
     lines.push(Line::default());
     for (message, color) in alerts {
         lines.extend(wrapped_alert_rows(&message, color, width));
@@ -276,6 +381,7 @@ fn render_clocks(
     clocks: &[Clock],
     display: &ClocksDisplayConfig,
     width: usize,
+    theme: Theme,
 ) {
     let enabled = [
         display.clock_1,
@@ -289,7 +395,7 @@ fn render_clocks(
         .filter_map(|(clock, enabled)| enabled.then_some(clock))
         .collect::<Vec<_>>();
     if display.heading {
-        section(lines, "Clocks", "", width);
+        section(lines, "Clocks", "", width, theme);
     }
     if clocks.is_empty() {
         if display.heading {
@@ -318,7 +424,7 @@ fn render_clocks(
         }
         city_spans.push(span(
             fixed(&clock.label.to_uppercase(), card_width),
-            Color::Cyan,
+            theme.heading,
             true,
         ));
         time_spans.push(Span::styled(
@@ -341,10 +447,18 @@ fn render_system(
     system: &SystemMetrics,
     display: &SystemDisplayConfig,
     width: usize,
+    theme: Theme,
 ) {
     let mut rows = Vec::new();
     if display.cpu {
-        rows.push(metric_row("CPU", system.cpu_percent, "used", true, width));
+        rows.push(metric_row(
+            "CPU",
+            system.cpu_percent,
+            "used",
+            true,
+            width,
+            theme,
+        ));
     }
     if display.ram {
         rows.push(metric_row(
@@ -353,14 +467,22 @@ fn render_system(
             "used",
             true,
             width,
+            theme,
         ));
     }
     if display.gpu {
-        rows.push(metric_row("GPU", system.gpu_percent, "used", true, width));
+        rows.push(metric_row(
+            "GPU",
+            system.gpu_percent,
+            "used",
+            true,
+            width,
+            theme,
+        ));
     }
     if display.storage {
         let used_percent = (100.0 - system.storage_percent_free).clamp(0.0, 100.0);
-        let color = color_for_usage(used_percent);
+        let color = color_for_usage(used_percent, theme);
         let mut storage = vec![dim(fixed("Storage", 8))];
         let storage_value = format!("{:>3}% free", system.storage_percent_free.round() as i64);
         storage.extend(bar_spans(
@@ -372,7 +494,7 @@ fn render_system(
             Span::raw("  "),
             span(
                 storage_value,
-                color_for_remaining(system.storage_percent_free),
+                color_for_remaining(system.storage_percent_free, theme),
                 true,
             ),
         ]);
@@ -383,19 +505,19 @@ fn render_system(
             dim(fixed("Network", 8)),
             span(
                 format!("↓ {}", rate_label(system.net_down_rate)),
-                Color::Green,
+                theme.accent,
                 true,
             ),
             Span::raw("  "),
             span(
                 format!("↑ {}", rate_label(system.net_up_rate)),
-                Color::Green,
+                theme.accent,
                 true,
             ),
         ]));
     }
     if display.heading {
-        section(lines, "System", "", width);
+        section(lines, "System", "", width, theme);
     }
     if display.heading && !rows.is_empty() {
         lines.push(Line::default());
@@ -410,16 +532,17 @@ fn render_ai_quotas(
     codex: &ProviderState<Value>,
     display: &AiDisplayConfig,
     width: usize,
+    theme: Theme,
 ) {
     if display.heading {
-        section(lines, "AI", "", width);
+        section(lines, "AI", "", width, theme);
     }
 
     let mut rows = Vec::new();
     let mut statuses = Vec::new();
     let mut details = Vec::new();
     if display.amp_plan || display.amp_orbs || display.amp_credits {
-        collect_amp_ai_rows(&mut rows, &mut statuses, &mut details, amp, display);
+        collect_amp_ai_rows(&mut rows, &mut statuses, &mut details, amp, display, theme);
     }
     if display.codex_quota {
         collect_codex_ai_rows(&mut rows, &mut statuses, codex);
@@ -430,7 +553,7 @@ fn render_ai_quotas(
     }
     lines.extend(statuses);
     if !rows.is_empty() {
-        render_ai_quota_rows(lines, rows, width);
+        render_ai_quota_rows(lines, rows, width, theme);
     }
     lines.extend(details);
     lines.push(Line::default());
@@ -447,31 +570,30 @@ fn render_ai_at(
     today: NaiveDate,
 ) {
     let display = SectionDisplayConfig::default();
-    render_ai_quotas(lines, amp, codex, &display.ai, width);
-    render_activity_sections(
-        lines,
-        amp_activity,
-        codex_activity,
-        &SectionsConfig::default(),
-        &display,
-        width,
-        today,
-    );
+    let sections = SectionsConfig::default();
+    let dashboard = Dashboard::new(&[], &sections, &display, ColorTheme::default());
+    render_ai_quotas(lines, amp, codex, &display.ai, width, dashboard.theme);
+    render_activity_sections(lines, amp_activity, codex_activity, dashboard, width, today);
 }
 
 fn render_activity_sections(
     lines: &mut Vec<Line<'static>>,
     amp: &ProviderState<AmpActivityUsage>,
     codex: &ProviderState<CodexActivityUsage>,
-    sections: &SectionsConfig,
-    display: &SectionDisplayConfig,
+    dashboard: Dashboard<'_>,
     width: usize,
     today: NaiveDate,
 ) {
+    let Dashboard {
+        sections,
+        display,
+        theme,
+        ..
+    } = dashboard;
     let amp_display = &display.amp_activity;
     if sections.amp_activity {
         if amp_display.heading {
-            section(lines, "Amp Activity", "", width);
+            section(lines, "Amp Activity", "", width, theme);
         }
         let has_data = amp_display.calendar
             || amp_display.daily_activity
@@ -482,7 +604,7 @@ fn render_activity_sections(
             lines.push(Line::default());
         }
         if has_data {
-            render_amp_activity(lines, amp, width, today, amp_display);
+            render_amp_activity(lines, amp, width, today, amp_display, theme);
         }
         if amp_display.heading || has_data {
             lines.push(Line::default());
@@ -491,7 +613,7 @@ fn render_activity_sections(
     let codex_display = &display.codex_activity;
     if sections.codex_activity {
         if codex_display.heading {
-            section(lines, "Codex Activity", "", width);
+            section(lines, "Codex Activity", "", width, theme);
         }
         let has_data =
             codex_display.calendar || codex_display.overview || codex_display.daily_activity;
@@ -499,7 +621,7 @@ fn render_activity_sections(
             lines.push(Line::default());
         }
         if has_data {
-            render_codex_activity(lines, codex, width, today, codex_display);
+            render_codex_activity(lines, codex, width, today, codex_display, theme);
         }
         if codex_display.heading || has_data {
             lines.push(Line::default());
@@ -538,6 +660,7 @@ fn collect_amp_ai_rows(
     details: &mut Vec<Line<'static>>,
     amp: &ProviderState<AmpUsage>,
     display: &AiDisplayConfig,
+    theme: Theme,
 ) {
     if let Some(error) = &amp.error {
         statuses.push(ai_status_row("Amp", format!("Error: {error}"), Color::Red));
@@ -583,7 +706,7 @@ fn collect_amp_ai_rows(
         details.push(ai_status_row(
             "Credits",
             format!("{credits} remaining"),
-            Color::Green,
+            theme.accent,
         ));
     }
 }
@@ -655,9 +778,13 @@ fn collect_codex_ai_rows(
     }
 }
 
-fn render_ai_quota_rows(lines: &mut Vec<Line<'static>>, rows: Vec<AiQuotaRow>, width: usize) {
+fn render_ai_quota_rows(
+    lines: &mut Vec<Line<'static>>,
+    rows: Vec<AiQuotaRow>,
+    width: usize,
+    theme: Theme,
+) {
     const VALUE_WIDTH: usize = 9;
-    const LABEL_GAP: usize = 1;
     const VALUE_GAP: usize = 2;
     const TAIL_GAP: usize = 2;
 
@@ -667,7 +794,7 @@ fn render_ai_quota_rows(lines: &mut Vec<Line<'static>>, rows: Vec<AiQuotaRow>, w
         .map(|tail| tail.chars().count())
         .max()
         .unwrap_or_default();
-    let fixed_width = CODEX_GUTTER_WIDTH + LABEL_GAP + VALUE_GAP + VALUE_WIDTH;
+    let fixed_width = CODEX_GUTTER_WIDTH + AI_LABEL_GAP + VALUE_GAP + VALUE_WIDTH;
     let available = width.saturating_sub(fixed_width);
     let show_tail = tail_width > 0 && available >= 4 + TAIL_GAP + tail_width;
     let bar_width = if show_tail {
@@ -680,7 +807,7 @@ fn render_ai_quota_rows(lines: &mut Vec<Line<'static>>, rows: Vec<AiQuotaRow>, w
         if width < fixed_width {
             let label_width = CODEX_GUTTER_WIDTH.min(width);
             let value_width = width.saturating_sub(label_width);
-            let color = color_for_remaining(row.percent_left);
+            let color = color_for_remaining(row.percent_left, theme);
             let mut spans = vec![dim(fixed(&row.label, label_width))];
             let full_value = format!("{}% left", row.percent_left.round() as i64);
             let compact_value = format!("{}%", row.percent_left.round() as i64);
@@ -692,10 +819,10 @@ fn render_ai_quota_rows(lines: &mut Vec<Line<'static>>, rows: Vec<AiQuotaRow>, w
             lines.push(Line::from(spans));
             continue;
         }
-        let color = color_for_remaining(row.percent_left);
+        let color = color_for_remaining(row.percent_left, theme);
         let mut spans = vec![
             dim(fixed(&row.label, CODEX_GUTTER_WIDTH)),
-            Span::raw(" ".repeat(LABEL_GAP)),
+            Span::raw(" ".repeat(AI_LABEL_GAP)),
         ];
         if bar_width >= 4 {
             spans.extend(bar_spans(row.percent_left, bar_width, color));
@@ -721,13 +848,14 @@ fn ai_quota_tail(row: &AiQuotaRow) -> String {
 fn ai_status_row(label: &str, message: impl Into<String>, color: Color) -> Line<'static> {
     Line::from(vec![
         dim(fixed(label, CODEX_GUTTER_WIDTH)),
+        Span::raw(" ".repeat(AI_LABEL_GAP)),
         span(message.into(), color, true),
     ])
 }
 
-pub(super) fn section(lines: &mut Vec<Line<'static>>, title: &str, meta: &str, width: usize) {
+fn section(lines: &mut Vec<Line<'static>>, title: &str, meta: &str, width: usize, theme: Theme) {
     let heading = title.to_uppercase();
-    let mut spans = vec![span(heading.clone(), Color::Cyan, true)];
+    let mut spans = vec![span(heading.clone(), theme.heading, true)];
     let mut used = heading.len();
     if !meta.is_empty() {
         spans.push(dim(" "));
@@ -745,12 +873,13 @@ fn metric_row(
     suffix: &str,
     usage: bool,
     width: usize,
+    theme: Theme,
 ) -> Line<'static> {
     if let Some(percent) = percent {
         let color = if usage {
-            color_for_usage(percent)
+            color_for_usage(percent, theme)
         } else {
-            color_for_remaining(percent)
+            color_for_remaining(percent, theme)
         };
         let value = format!("{:>3}% {suffix}", percent.round() as i64);
         let mut row = vec![dim(fixed(label, 8))];
@@ -827,18 +956,18 @@ fn reset_label(window: &Value) -> String {
     }
 }
 
-fn color_for_remaining(percent: f64) -> Color {
+fn color_for_remaining(percent: f64, theme: Theme) -> Color {
     if percent <= 15.0 {
         Color::Red
     } else if percent <= 35.0 {
         Color::Yellow
     } else {
-        Color::Green
+        theme.accent
     }
 }
 
-fn color_for_usage(percent: f64) -> Color {
-    color_for_remaining(100.0 - percent)
+fn color_for_usage(percent: f64, theme: Theme) -> Color {
+    color_for_remaining(100.0 - percent, theme)
 }
 
 fn rate_label(value: Option<f64>) -> String {
@@ -1050,11 +1179,40 @@ mod tests {
     }
 
     #[test]
+    fn color_themes_coordinate_normal_values_and_activity_levels() {
+        for color_theme in [
+            ColorTheme::Aurora,
+            ColorTheme::Emerald,
+            ColorTheme::Ocean,
+            ColorTheme::Sunset,
+            ColorTheme::Monochrome,
+        ] {
+            let theme = Theme::new(color_theme);
+
+            assert_eq!(color_for_remaining(90.0, theme), theme.accent);
+            assert_eq!(color_for_usage(10.0, theme), theme.accent);
+            assert!(
+                theme
+                    .activity
+                    .windows(2)
+                    .all(|colors| colors[0] != colors[1])
+            );
+        }
+    }
+
+    #[test]
     fn renders_clocks_as_equal_high_contrast_columns() {
         let mut lines = Vec::new();
         let clocks = crate::config::Config::default().clocks;
+        let theme = Theme::default();
 
-        render_clocks(&mut lines, &clocks, &ClocksDisplayConfig::default(), 58);
+        render_clocks(
+            &mut lines,
+            &clocks,
+            &ClocksDisplayConfig::default(),
+            58,
+            theme,
+        );
 
         assert_eq!(lines.len(), 5);
         assert!(line_text(&lines[0]).starts_with("CLOCKS"));
@@ -1067,7 +1225,7 @@ mod tests {
             lines[2]
                 .spans
                 .iter()
-                .filter(|span| span.style.fg == Some(Color::Cyan))
+                .filter(|span| span.style.fg == Some(theme.heading))
                 .count()
                 == 4
         );
@@ -1084,6 +1242,7 @@ mod tests {
     #[test]
     fn renders_a_custom_clock_selection() {
         let mut lines = Vec::new();
+        let theme = Theme::default();
         let clocks = vec![
             Clock {
                 label: "London".into(),
@@ -1095,7 +1254,13 @@ mod tests {
             },
         ];
 
-        render_clocks(&mut lines, &clocks, &ClocksDisplayConfig::default(), 40);
+        render_clocks(
+            &mut lines,
+            &clocks,
+            &ClocksDisplayConfig::default(),
+            40,
+            theme,
+        );
 
         assert!(line_text(&lines[2]).contains("LONDON"));
         assert!(line_text(&lines[2]).contains("TOKYO"));
@@ -1103,7 +1268,7 @@ mod tests {
             lines[2]
                 .spans
                 .iter()
-                .filter(|span| span.style.fg == Some(Color::Cyan))
+                .filter(|span| span.style.fg == Some(theme.heading))
                 .count(),
             2
         );
@@ -1174,7 +1339,7 @@ mod tests {
 
         for width in [9, 10, 11, 12, 18, 19] {
             let mut lines = Vec::new();
-            render_ai_quota_rows(&mut lines, vec![row.clone()], width);
+            render_ai_quota_rows(&mut lines, vec![row.clone()], width, Theme::default());
             assert_eq!(lines.len(), 1);
             assert!(line_text(&lines[0]).chars().count() <= width);
             if width >= 18 {
@@ -1203,7 +1368,7 @@ mod tests {
         ];
         let mut lines = Vec::new();
 
-        render_ai_quota_rows(&mut lines, rows, 58);
+        render_ai_quota_rows(&mut lines, rows, 58, Theme::default());
 
         assert_eq!(lines.len(), 2);
         assert!(
@@ -1230,6 +1395,31 @@ mod tests {
     }
 
     #[test]
+    fn aligns_ai_detail_values_with_quota_tracks() {
+        let mut quota_lines = Vec::new();
+        let theme = Theme::default();
+        render_ai_quota_rows(
+            &mut quota_lines,
+            vec![AiQuotaRow {
+                label: "Megawatt".into(),
+                percent_left: 96.0,
+                reset: Some("21 Sep".into()),
+            }],
+            58,
+            theme,
+        );
+        let credits = ai_status_row("Credits", "$11.01 remaining", theme.accent);
+        let span_start = |line: &Line<'_>, index: usize| {
+            line.spans[..index]
+                .iter()
+                .map(|span| span.content.chars().count())
+                .sum::<usize>()
+        };
+
+        assert_eq!(span_start(&quota_lines[0], 2), span_start(&credits, 2));
+    }
+
+    #[test]
     fn renders_wrapped_alerts_at_the_top_only_when_present() {
         let today = date("2026-08-02");
         let state = AppState {
@@ -1248,7 +1438,7 @@ mod tests {
         };
         let mut lines = Vec::new();
 
-        render_alerts(&mut lines, &state, 40, today);
+        render_alerts(&mut lines, &state, 40, today, Theme::default());
         let text = lines.iter().map(line_text).collect::<Vec<_>>();
 
         assert!(text[0].starts_with("ALERTS"));
@@ -1259,7 +1449,13 @@ mod tests {
         assert!(text.iter().all(|line| line.chars().count() <= 40));
 
         let mut empty = Vec::new();
-        render_alerts(&mut empty, &AppState::default(), 40, today);
+        render_alerts(
+            &mut empty,
+            &AppState::default(),
+            40,
+            today,
+            Theme::default(),
+        );
         assert!(empty.is_empty());
     }
 
@@ -1272,14 +1468,10 @@ mod tests {
             amp_activity: false,
             codex_activity: true,
         };
+        let display = SectionDisplayConfig::default();
+        let dashboard = Dashboard::new(&[], &sections, &display, ColorTheme::default());
 
-        let lines = stats_lines(
-            &AppState::default(),
-            &[],
-            &sections,
-            &SectionDisplayConfig::default(),
-            58,
-        );
+        let lines = stats_lines(&AppState::default(), dashboard, 58);
         let text = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
         assert!(text.contains("CODEX ACTIVITY"));
@@ -1336,14 +1528,10 @@ mod tests {
             },
             ..AppState::default()
         };
+        let config = crate::config::Config::default();
+        let dashboard = Dashboard::new(&config.clocks, &sections, &display, ColorTheme::default());
 
-        let lines = stats_lines(
-            &state,
-            &crate::config::Config::default().clocks,
-            &sections,
-            &display,
-            58,
-        );
+        let lines = stats_lines(&state, dashboard, 58);
         let text = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
         assert!(text.contains("MUMBAI"));

@@ -4,7 +4,7 @@ use chrono::{Datelike, Days, NaiveDate};
 use ratatui::style::Color;
 use ratatui::text::{Line, Span};
 
-use super::{CODEX_GUTTER_WIDTH, ai_status_row, dim, equal_column_widths, fixed, span};
+use super::{CODEX_GUTTER_WIDTH, Theme, ai_status_row, dim, equal_column_widths, fixed, span};
 use crate::config::{AmpActivityDisplayConfig, CodexActivityDisplayConfig};
 use crate::model::{
     AmpActivityUsage, AmpTokenCategory, CodexActivitySummary, CodexActivityUsage,
@@ -39,6 +39,7 @@ pub(super) fn render_codex_activity(
     width: usize,
     utc_today: NaiveDate,
     display: &CodexActivityDisplayConfig,
+    theme: Theme,
 ) {
     if activity_week_capacity(width) == 0 {
         return;
@@ -73,6 +74,7 @@ pub(super) fn render_codex_activity(
         display.calendar,
         display.overview,
         display.daily_activity,
+        theme,
     );
 }
 
@@ -82,6 +84,7 @@ pub(super) fn render_amp_activity(
     width: usize,
     utc_today: NaiveDate,
     display: &AmpActivityDisplayConfig,
+    theme: Theme,
 ) {
     if activity_week_capacity(width) == 0 {
         return;
@@ -124,6 +127,7 @@ pub(super) fn render_amp_activity(
         display.calendar,
         false,
         display.daily_activity,
+        theme,
     );
     let detail_start = calendar
         .utc_today
@@ -140,7 +144,7 @@ pub(super) fn render_amp_activity(
             .cloned()
             .collect(),
     };
-    let details = amp_detail_rows(&recent_activity, width, calendar.utc_today, display);
+    let details = amp_detail_rows(&recent_activity, width, calendar.utc_today, display, theme);
     if !details.is_empty() {
         if display.calendar || display.daily_activity {
             lines.push(Line::default());
@@ -214,6 +218,7 @@ fn render_activity_calendar(
     show_calendar: bool,
     show_overview: bool,
     show_daily_activity: bool,
+    theme: Theme,
 ) {
     let mut blocks = Vec::new();
     if show_calendar {
@@ -240,8 +245,8 @@ fn render_activity_calendar(
                     spans.push(dim("·"));
                 } else {
                     spans.push(span(
-                        "▪",
-                        activity_green(activity_intensity(tokens, calendar.quartiles)),
+                        "■",
+                        theme.activity(activity_intensity(tokens, calendar.quartiles)),
                         true,
                     ));
                 }
@@ -251,10 +256,10 @@ fn render_activity_calendar(
         blocks.push(rows);
     }
     if show_overview {
-        blocks.push(activity_overview_rows(calendar, width));
+        blocks.push(activity_overview_rows(calendar, width, theme));
     }
     if show_daily_activity {
-        blocks.push(activity_daily_rows(calendar, width));
+        blocks.push(activity_daily_rows(calendar, width, theme));
     }
     for (index, block) in blocks
         .into_iter()
@@ -295,6 +300,7 @@ fn amp_detail_rows(
     width: usize,
     utc_today: NaiveDate,
     display: &AmpActivityDisplayConfig,
+    theme: Theme,
 ) -> Vec<Line<'static>> {
     let periods = [1_u64, 7, AMP_DETAIL_DAYS];
     let mut blocks = Vec::new();
@@ -311,6 +317,7 @@ fn amp_detail_rows(
                     )
                 }),
                 width,
+                theme,
             ),
             amp_table_row(
                 "Paid",
@@ -323,6 +330,7 @@ fn amp_detail_rows(
                     )
                 }),
                 width,
+                theme,
             ),
             amp_table_row(
                 "Orb time",
@@ -334,6 +342,7 @@ fn amp_detail_rows(
                     )
                 }),
                 width,
+                theme,
             ),
         ]);
     }
@@ -343,6 +352,7 @@ fn amp_detail_rows(
             AmpCategoryKind::Models,
             width,
             utc_today,
+            theme,
         ));
     }
     if display.sources {
@@ -351,6 +361,7 @@ fn amp_detail_rows(
             AmpCategoryKind::Sources,
             width,
             utc_today,
+            theme,
         ));
     }
     let mut rows = Vec::new();
@@ -364,6 +375,7 @@ fn amp_detail_rows(
                 "",
                 ["1D".into(), "7D".into(), "30D".into()],
                 width,
+                theme,
             ));
         } else {
             rows.push(Line::default());
@@ -387,17 +399,19 @@ fn period_buckets(
     })
 }
 
-fn amp_table_row(label: &str, values: [String; 3], width: usize) -> Line<'static> {
+fn amp_table_row(label: &str, values: [String; 3], width: usize, theme: Theme) -> Line<'static> {
     let minimum_label_width = CODEX_GUTTER_WIDTH.min(width);
     let label_width = width.saturating_sub(21).clamp(minimum_label_width, 24);
     let column_widths = equal_column_widths(width.saturating_sub(label_width), values.len());
     let mut spans = vec![dim(fixed(label, label_width))];
-    spans.extend(
-        values
-            .into_iter()
-            .zip(column_widths)
-            .map(|(value, width)| dim(right_fixed(&value, width))),
-    );
+    spans.extend(values.into_iter().zip(column_widths).map(|(value, width)| {
+        let value = right_fixed(&value, width);
+        if label.is_empty() || value.trim().is_empty() {
+            dim(value)
+        } else {
+            span(value, theme.accent, true)
+        }
+    }));
     Line::from(spans)
 }
 
@@ -427,6 +441,7 @@ fn category_table_rows(
     kind: AmpCategoryKind,
     width: usize,
     utc_today: NaiveDate,
+    theme: Theme,
 ) -> Vec<Line<'static>> {
     let categories = aggregate_categories(
         activity
@@ -442,6 +457,7 @@ fn category_table_rows(
         kind.heading(),
         std::array::from_fn(|_| String::new()),
         width,
+        theme,
     )];
     rows.extend(
         categories
@@ -460,6 +476,7 @@ fn category_table_rows(
                         )
                     }),
                     width,
+                    theme,
                 )
             }),
     );
@@ -490,7 +507,11 @@ fn sync_eta(seconds: u64) -> String {
     }
 }
 
-fn activity_overview_rows(calendar: &ActivityCalendar, width: usize) -> Vec<Line<'static>> {
+fn activity_overview_rows(
+    calendar: &ActivityCalendar,
+    width: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
     let mut stats = vec![
         (
             "7D",
@@ -534,7 +555,7 @@ fn activity_overview_rows(calendar: &ActivityCalendar, width: usize) -> Vec<Line
             values.push(Span::raw(" ".repeat(gap)));
         }
         headings.push(dim(fixed(heading, column_width)));
-        values.push(span(fixed(&value, column_width), Color::Green, true));
+        values.push(span(fixed(&value, column_width), theme.accent, true));
     }
     vec![Line::from(headings), Line::from(values)]
 }
@@ -550,7 +571,11 @@ fn activity_period_tokens(calendar: &ActivityCalendar, days: u64) -> u64 {
         .fold(0, |total, (_, tokens)| total.saturating_add(*tokens))
 }
 
-fn activity_daily_rows(calendar: &ActivityCalendar, width: usize) -> Vec<Line<'static>> {
+fn activity_daily_rows(
+    calendar: &ActivityCalendar,
+    width: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
     if width < 7 {
         return Vec::new();
     }
@@ -580,10 +605,9 @@ fn activity_daily_rows(calendar: &ActivityCalendar, width: usize) -> Vec<Line<'s
         if tokens == 0 {
             value_spans.push(dim(fixed("·", cell_width)));
         } else {
-            let color = activity_green(activity_intensity(tokens, calendar.quartiles));
             value_spans.push(span(
                 fixed(&compact_token_count(tokens), cell_width),
-                color,
+                theme.accent,
                 true,
             ));
         }
@@ -703,23 +727,14 @@ fn activity_quartiles(values: &[u64]) -> [u64; 3] {
 }
 
 fn activity_intensity(tokens: u64, quartiles: [u64; 3]) -> usize {
-    if tokens <= quartiles[0] {
+    if tokens < quartiles[0] {
         1
-    } else if tokens <= quartiles[1] {
+    } else if tokens < quartiles[1] {
         2
-    } else if tokens <= quartiles[2] {
+    } else if tokens < quartiles[2] {
         3
     } else {
         4
-    }
-}
-
-fn activity_green(level: usize) -> Color {
-    match level {
-        1 => Color::Rgb(14, 68, 41),
-        2 => Color::Rgb(0, 109, 50),
-        3 => Color::Rgb(38, 166, 65),
-        _ => Color::Rgb(57, 211, 83),
     }
 }
 
@@ -835,13 +850,14 @@ mod tests {
             30,
             date("2026-08-01"),
             &CodexActivityDisplayConfig::default(),
+            Theme::default(),
         );
 
         assert_eq!(lines.len(), 14);
         assert_eq!(line_text(&lines[1]).chars().count(), 30);
         assert!(line_text(&lines[1]).starts_with("Sun  ·"));
-        assert!(line_text(&lines[1]).ends_with('▪'));
-        assert!(line_text(&lines[7]).ends_with('▪'));
+        assert!(line_text(&lines[1]).ends_with('■'));
+        assert!(line_text(&lines[7]).ends_with('■'));
         assert!(
             lines[2..7]
                 .iter()
@@ -874,9 +890,10 @@ mod tests {
             30,
             date("2026-08-05"),
             &CodexActivityDisplayConfig::default(),
+            Theme::default(),
         );
 
-        assert!(line_text(&lines[4]).ends_with('▪'));
+        assert!(line_text(&lines[4]).ends_with('■'));
         assert!(line_text(&lines[5]).ends_with(' '));
         assert!(line_text(&lines[6]).ends_with(' '));
         assert!(line_text(&lines[7]).ends_with(' '));
@@ -918,6 +935,15 @@ mod tests {
         assert_eq!(activity_intensity(30, quartiles), 2);
         assert_eq!(activity_intensity(50, quartiles), 3);
         assert_eq!(activity_intensity(70, quartiles), 4);
+        assert_eq!(activity_intensity(80, quartiles), 4);
+    }
+
+    #[test]
+    fn sparse_or_equal_activity_uses_the_strongest_level() {
+        let quartiles = activity_quartiles(&[20, 20]);
+
+        assert_eq!(quartiles, [20, 20, 20]);
+        assert_eq!(activity_intensity(20, quartiles), 4);
     }
 
     #[test]
@@ -936,7 +962,7 @@ mod tests {
         assert_eq!(activity_period_tokens(&calendar, 1), 100_000_000);
         assert_eq!(activity_period_tokens(&calendar, 7), 347_250_000);
         assert_eq!(activity_period_tokens(&calendar, 30), 357_250_000);
-        let summary = activity_overview_rows(&calendar, 51);
+        let summary = activity_overview_rows(&calendar, 51, Theme::default());
         assert_eq!(summary.len(), 2);
         assert_eq!(summary[0].spans[0].content.trim(), "7D");
         assert_eq!(summary[0].spans[2].content.trim(), "30D");
@@ -968,7 +994,7 @@ mod tests {
         );
         let calendar = activity_calendar(&usage, 100, date("2026-08-02")).unwrap();
 
-        let overview = activity_overview_rows(&calendar, 51);
+        let overview = activity_overview_rows(&calendar, 51, Theme::default());
         assert_eq!(overview.len(), 2);
         assert_eq!(overview[0].spans.len(), 11);
         assert_eq!(overview[0].spans[4].content.trim(), "Total");
@@ -1030,7 +1056,8 @@ mod tests {
             ("2026-08-01", 70),
         ]);
         let calendar = activity_calendar(&usage, 51, date("2026-08-02")).unwrap();
-        let rows = activity_daily_rows(&calendar, 51);
+        let theme = Theme::default();
+        let rows = activity_daily_rows(&calendar, 51, theme);
 
         assert_eq!(rows.len(), 2);
         assert!(rows.iter().all(|row| line_text(row).chars().count() == 51));
@@ -1039,8 +1066,8 @@ mod tests {
         assert_eq!(rows[0].spans[12].content.trim(), "1/8");
         assert_eq!(rows[1].spans[0].content.trim(), "10");
         assert_eq!(rows[1].spans[12].content.trim(), "70");
-        assert_eq!(rows[1].spans[0].style.fg, Some(activity_green(1)));
-        assert_eq!(rows[1].spans[12].style.fg, Some(activity_green(4)));
+        assert_eq!(rows[1].spans[0].style.fg, Some(theme.accent));
+        assert_eq!(rows[1].spans[12].style.fg, Some(theme.accent));
         for index in (0..13).step_by(2) {
             assert!(!rows[0].spans[index].content.starts_with(' '));
             assert!(!rows[1].spans[index].content.starts_with(' '));
@@ -1063,7 +1090,7 @@ mod tests {
     fn renders_missing_daily_usage_as_dim_dots() {
         let empty = activity(&[("2026-08-02", 0)]);
         let empty_calendar = activity_calendar(&empty, 22, date("2026-08-02")).unwrap();
-        let rows = activity_daily_rows(&empty_calendar, 22);
+        let rows = activity_daily_rows(&empty_calendar, 22, Theme::default());
 
         assert_eq!(rows.len(), 2);
         let dots = rows[1]
@@ -1076,7 +1103,7 @@ mod tests {
             dots.iter()
                 .all(|span| span.style.add_modifier.contains(Modifier::DIM))
         );
-        assert!(activity_daily_rows(&empty_calendar, 6).is_empty());
+        assert!(activity_daily_rows(&empty_calendar, 6, Theme::default()).is_empty());
     }
 
     #[test]
@@ -1104,6 +1131,7 @@ mod tests {
                 sources: false,
                 ..AmpActivityDisplayConfig::default()
             },
+            Theme::default(),
         )
         .iter()
         .map(line_text)
@@ -1121,6 +1149,7 @@ mod tests {
             40,
             date("2026-08-02"),
             &AmpActivityDisplayConfig::default(),
+            Theme::default(),
         )
         .iter()
         .map(line_text)
@@ -1213,6 +1242,7 @@ mod tests {
             40,
             date("2026-08-02"),
             &AmpActivityDisplayConfig::default(),
+            Theme::default(),
         );
         let rendered = lines.iter().map(line_text).collect::<Vec<_>>();
         let text = rendered.join("\n");

@@ -53,6 +53,7 @@ pub(crate) fn parse_args() -> Result<Args, String> {
             clocks: Config::default().clocks,
             sections: Config::default().sections,
             section_display: Config::default().section_display,
+            color_theme: Config::default().desktop.color_theme,
             show_scrollbar: Config::default().desktop.show_scrollbar,
             config_path,
         });
@@ -76,6 +77,7 @@ pub(crate) fn parse_args() -> Result<Args, String> {
     let clocks = configured_clocks(config.clocks);
     let sections = config.sections;
     let section_display = config.section_display;
+    let color_theme = config.desktop.color_theme;
     let show_scrollbar = config.desktop.show_scrollbar;
 
     if interval < 5 {
@@ -94,6 +96,7 @@ pub(crate) fn parse_args() -> Result<Args, String> {
         clocks,
         sections,
         section_display,
+        color_theme,
         show_scrollbar,
         config_path,
     })

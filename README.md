@@ -174,9 +174,10 @@ storage_seconds = 300
 [desktop]
 font_size = 15
 show_scrollbar = false
+color_theme = "aurora"
 ```
 
-Version 2 requires the complete configuration shown above; older versions and omitted fields are rejected. The config requires four clocks with valid IANA time zone identifiers. The `[sections]` flags independently control the Clocks, System, AI quota, Amp Activity, and Codex Activity sections. The corresponding `[section_display.*]` tables control their headings and individual rows or charts. An enabled section must have at least one display option enabled; a disabled section may retain any display choices. Data providers are not refreshed when none of their visible controls require them. `desktop.font_size` controls the embedded terminal in the macOS app and accepts values from 10 through 24. `desktop.show_scrollbar` controls the dashboard scrollbar. Launch-at-login and window placement remain native macOS settings.
+Version 2 requires the complete configuration shown above; older versions and omitted fields are rejected, except that existing version 2 files without `desktop.color_theme` default to `aurora`. The config requires four clocks with valid IANA time zone identifiers. The `[sections]` flags independently control the Clocks, System, AI quota, Amp Activity, and Codex Activity sections. The corresponding `[section_display.*]` tables control their headings and individual rows or charts. An enabled section must have at least one display option enabled; a disabled section may retain any display choices. Data providers are not refreshed when none of their visible controls require them. `desktop.font_size` controls the embedded terminal in the macOS app and accepts values from 10 through 24. `desktop.show_scrollbar` controls the dashboard scrollbar. `desktop.color_theme` controls the coordinated colors used across the dashboard and accepts `aurora`, `emerald`, `ocean`, `sunset`, or `monochrome`; the same presets are available from **Settings → General → Appearance**. Launch-at-login and window placement remain native macOS settings.
 
 ## Privacy and security
 
