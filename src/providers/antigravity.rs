@@ -1,16 +1,18 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use chrono::Local;
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde_json::Value;
 
+use crate::cache::{load_cached_quota, write_usage_cache};
 use crate::model::{AppState, QuotaLimit, QuotaUsage};
-use crate::providers::spawn_quota_refresh;
+use crate::worker::sleep_stop;
 
 const QUOTA_PATH: &str = "/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary";
 
@@ -43,14 +45,26 @@ pub(crate) fn spawn_refresh_antigravity(
     stop: &Arc<AtomicBool>,
     interval: u64,
 ) {
-    spawn_quota_refresh(
-        state,
-        stop,
-        interval,
-        "antigravity",
-        |state| &mut state.antigravity,
-        read_usage,
-    );
+    let state = Arc::clone(state);
+    let stop = Arc::clone(stop);
+    thread::spawn(move || {
+        while !stop.load(Ordering::Relaxed) {
+            match read_usage() {
+                Ok(result) => {
+                    write_usage_cache("antigravity", &result);
+                    let mut guard = state.lock().unwrap();
+                    guard.antigravity.result = Some(result);
+                    guard.antigravity.error = None;
+                    guard.antigravity.updated_at = Some(Local::now());
+                    guard.antigravity.stale = false;
+                }
+                Err(error) => {
+                    load_cached_quota(&mut state.lock().unwrap().antigravity, "antigravity", error)
+                }
+            }
+            sleep_stop(&stop, Duration::from_secs(interval));
+        }
+    });
 }
 
 fn read_usage() -> Result<QuotaUsage, String> {
