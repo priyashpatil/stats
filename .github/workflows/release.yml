@@ -25,6 +25,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.repository.default_branch || github.ref }}
+          token: ${{ github.event_name == 'workflow_dispatch' && secrets.RELEASE_TOKEN || github.token }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -102,6 +103,7 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GITHUB_TOKEN: ${{ github.token }}
           TAG: ${{ steps.release.outputs.tag }}
         run: |
           git config user.name "github-actions[bot]"
@@ -111,9 +113,13 @@ jobs:
             git commit -m "chore: release $TAG"
           fi
           git tag --annotate "$TAG" --message "Release $TAG"
-          git push --atomic origin \
-            "HEAD:refs/heads/$DEFAULT_BRANCH" \
-            "$TAG:refs/tags/$TAG"
+          git push origin "HEAD:refs/heads/$DEFAULT_BRANCH"
+
+          # Avoid triggering a duplicate tag-push release workflow.
+          auth="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 | tr -d '\n')"
+          git config --local --replace-all http.https://github.com/.extraheader \
+            "AUTHORIZATION: basic $auth"
+          git push origin "$TAG:refs/tags/$TAG"
 
   build:
     needs: prepare
