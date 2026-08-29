@@ -122,17 +122,7 @@ fn run_stats(args: Args) -> Result<AppOutcome, String> {
             print_once(&state, &args.sections, &args.section_display);
             Ok(AppOutcome::Done)
         } else {
-            run_tui(
-                &state,
-                &stop,
-                &args.clocks,
-                &args.sections,
-                &args.section_display,
-                args.color_theme,
-                args.show_scrollbar,
-                &args.config_path,
-            )
-            .map(|reload| {
+            run_tui(&state, &stop, &args).map(|reload| {
                 if reload {
                     AppOutcome::Reload
                 } else {

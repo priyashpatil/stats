@@ -128,21 +128,47 @@ use crate::config::{
     AiDisplayConfig, ClocksDisplayConfig, ColorTheme, SectionDisplayConfig, SectionsConfig,
     SystemDisplayConfig,
 };
+use crate::model::Args;
 use activity::{
     amp_activity_history_days, amp_activity_sync_message, render_amp_activity,
     render_codex_activity,
 };
 
+#[derive(Clone, Copy)]
+struct Dashboard<'a> {
+    clocks: &'a [Clock],
+    sections: &'a SectionsConfig,
+    display: &'a SectionDisplayConfig,
+    theme: Theme,
+}
+
+impl<'a> Dashboard<'a> {
+    fn new(
+        clocks: &'a [Clock],
+        sections: &'a SectionsConfig,
+        display: &'a SectionDisplayConfig,
+        color_theme: ColorTheme,
+    ) -> Self {
+        Self {
+            clocks,
+            sections,
+            display,
+            theme: Theme::new(color_theme),
+        }
+    }
+}
+
 pub(crate) fn run_tui(
     state: &Arc<Mutex<AppState>>,
     stop: &Arc<AtomicBool>,
-    clocks: &[Clock],
-    sections: &SectionsConfig,
-    section_display: &SectionDisplayConfig,
-    color_theme: ColorTheme,
-    show_scrollbar: bool,
-    config_path: &Path,
+    args: &Args,
 ) -> Result<bool, String> {
+    let dashboard = Dashboard::new(
+        &args.clocks,
+        &args.sections,
+        &args.section_display,
+        args.color_theme,
+    );
     enable_raw_mode().map_err(|err| err.to_string())?;
     let mut stdout = io::stdout();
     execute!(
@@ -162,7 +188,7 @@ pub(crate) fn run_tui(
     let mut scroll_offset = 0;
     let mut max_scroll = 0;
     let mut page_rows = 1;
-    let initial_config_revision = config_revision(config_path);
+    let initial_config_revision = config_revision(&args.config_path);
     let result = loop {
         let mut content_rows = 0;
         terminal
@@ -170,11 +196,8 @@ pub(crate) fn run_tui(
                 (content_rows, max_scroll, page_rows) = draw(
                     frame,
                     state,
-                    clocks,
-                    sections,
-                    section_display,
-                    color_theme,
-                    show_scrollbar,
+                    dashboard,
+                    args.show_scrollbar,
                     &mut scroll_offset,
                 )
             })
@@ -227,7 +250,7 @@ pub(crate) fn run_tui(
         if stop.load(Ordering::Relaxed) {
             break Ok(false);
         }
-        if config_revision(config_path) != initial_config_revision {
+        if config_revision(&args.config_path) != initial_config_revision {
             stop.store(true, Ordering::Relaxed);
             break Ok(true);
         }
@@ -253,10 +276,7 @@ fn config_revision(path: &Path) -> Option<SystemTime> {
 fn draw(
     frame: &mut Frame,
     state: &Arc<Mutex<AppState>>,
-    clocks: &[Clock],
-    sections: &SectionsConfig,
-    section_display: &SectionDisplayConfig,
-    color_theme: ColorTheme,
+    dashboard: Dashboard<'_>,
     show_scrollbar: bool,
     scroll_offset: &mut usize,
 ) -> (usize, usize, usize) {
@@ -267,20 +287,13 @@ fn draw(
     }
     let snapshot = {
         let mut state = state.lock().unwrap();
-        if sections.amp_activity {
+        if dashboard.sections.amp_activity {
             state.amp_activity_history_days =
                 amp_activity_history_days(content_area.width as usize, Utc::now().date_naive());
         }
         state.clone()
     };
-    let lines = stats_lines(
-        &snapshot,
-        clocks,
-        sections,
-        section_display,
-        color_theme,
-        content_area.width as usize,
-    );
+    let lines = stats_lines(&snapshot, dashboard, content_area.width as usize);
     let content_rows = lines.len();
     let page_rows = area.height as usize;
     let max_scroll = content_rows.saturating_sub(page_rows);
@@ -303,15 +316,13 @@ fn draw(
     (content_rows, max_scroll, page_rows.saturating_sub(1).max(1))
 }
 
-fn stats_lines(
-    state: &AppState,
-    clocks: &[Clock],
-    sections: &SectionsConfig,
-    display: &SectionDisplayConfig,
-    color_theme: ColorTheme,
-    width: usize,
-) -> Vec<Line<'static>> {
-    let theme = Theme::new(color_theme);
+fn stats_lines(state: &AppState, dashboard: Dashboard<'_>, width: usize) -> Vec<Line<'static>> {
+    let Dashboard {
+        clocks,
+        sections,
+        display,
+        theme,
+    } = dashboard;
     let mut lines = Vec::new();
     if sections.amp_activity && display.amp_activity.sync_alerts {
         render_alerts(&mut lines, state, width, Utc::now().date_naive(), theme);
@@ -336,9 +347,7 @@ fn stats_lines(
         &mut lines,
         &state.amp_activity,
         &state.codex_activity,
-        sections,
-        display,
-        theme,
+        dashboard,
         width,
         Utc::now().date_naive(),
     );
@@ -561,30 +570,26 @@ fn render_ai_at(
     today: NaiveDate,
 ) {
     let display = SectionDisplayConfig::default();
-    let theme = Theme::default();
-    render_ai_quotas(lines, amp, codex, &display.ai, width, theme);
-    render_activity_sections(
-        lines,
-        amp_activity,
-        codex_activity,
-        &SectionsConfig::default(),
-        &display,
-        theme,
-        width,
-        today,
-    );
+    let sections = SectionsConfig::default();
+    let dashboard = Dashboard::new(&[], &sections, &display, ColorTheme::default());
+    render_ai_quotas(lines, amp, codex, &display.ai, width, dashboard.theme);
+    render_activity_sections(lines, amp_activity, codex_activity, dashboard, width, today);
 }
 
 fn render_activity_sections(
     lines: &mut Vec<Line<'static>>,
     amp: &ProviderState<AmpActivityUsage>,
     codex: &ProviderState<CodexActivityUsage>,
-    sections: &SectionsConfig,
-    display: &SectionDisplayConfig,
-    theme: Theme,
+    dashboard: Dashboard<'_>,
     width: usize,
     today: NaiveDate,
 ) {
+    let Dashboard {
+        sections,
+        display,
+        theme,
+        ..
+    } = dashboard;
     let amp_display = &display.amp_activity;
     if sections.amp_activity {
         if amp_display.heading {
@@ -1463,15 +1468,10 @@ mod tests {
             amp_activity: false,
             codex_activity: true,
         };
+        let display = SectionDisplayConfig::default();
+        let dashboard = Dashboard::new(&[], &sections, &display, ColorTheme::default());
 
-        let lines = stats_lines(
-            &AppState::default(),
-            &[],
-            &sections,
-            &SectionDisplayConfig::default(),
-            ColorTheme::default(),
-            58,
-        );
+        let lines = stats_lines(&AppState::default(), dashboard, 58);
         let text = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
         assert!(text.contains("CODEX ACTIVITY"));
@@ -1528,15 +1528,10 @@ mod tests {
             },
             ..AppState::default()
         };
+        let config = crate::config::Config::default();
+        let dashboard = Dashboard::new(&config.clocks, &sections, &display, ColorTheme::default());
 
-        let lines = stats_lines(
-            &state,
-            &crate::config::Config::default().clocks,
-            &sections,
-            &display,
-            ColorTheme::default(),
-            58,
-        );
+        let lines = stats_lines(&state, dashboard, 58);
         let text = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
         assert!(text.contains("MUMBAI"));
