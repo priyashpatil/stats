@@ -122,6 +122,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     terminal?.terminate()
   }
 
+  func applicationDidBecomeActive(_ notification: Notification) {
+    redrawTerminal()
+  }
+
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
     false
   }
@@ -141,6 +145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
 
   func windowDidChangeScreen(_ notification: Notification) {
     windowPlacementStore.save(window)
+    redrawTerminal()
   }
 
   func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
@@ -374,7 +379,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       self.windowPlacementStore.restore(window)
       window.makeKeyAndOrderFront(nil)
       self.windowPlacementStore.save(window)
+      self.redrawTerminal()
     }
+  }
+
+  private func redrawTerminal() {
+    terminal?.needsDisplay = true
   }
 
   private var statsPalette: [SwiftTerm.Color] {
