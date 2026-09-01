@@ -394,10 +394,39 @@ fn epoch_seconds() -> f64 {
 fn extract_amp_usage(output: &str) -> Option<AmpUsage> {
     let cleaned = strip_ansi(output).replace("**", "");
     let subscription = Regex::new(
-        r"(?i)(?:Amp\s+([^:\r\n]+?)\s+Subscription|Subscription\s+([^:\r\n]+)):\s*([0-9]+(?:\.[0-9]+)?)%\s+other usage(?:\s+and\s+([0-9]+(?:\.[0-9]+)?)%\s+orb usage)?\s+remaining(?:\s+-\s+([^\r\n]+))?",
+        r"(?im)^(?:Amp\s+([^:\r\n]+?)\s+Subscription|Subscription\s+([^:\r\n]+)):\s*([^\r\n]+)",
     )
     .ok()?
     .captures(&cleaned)?;
+    let details = subscription.get(3)?.as_str();
+    let legacy_usage = Regex::new(
+        r"(?i)^([0-9]+(?:\.[0-9]+)?)%\s+other usage(?:\s+and\s+([0-9]+(?:\.[0-9]+)?)%\s+orb usage)?\s+remaining(?:\s+-\s+(.+))?$",
+    )
+    .ok()?;
+    let current_usage = Regex::new(
+        r"(?i)^agent usage\b.*?\bremaining\s*\(([0-9]+(?:\.[0-9]+)?)%\)(?:,\s*orb usage\b.*?\bremaining\s*\(([0-9]+(?:\.[0-9]+)?)%\))?(?:\s+-\s+(.+))?$",
+    )
+    .ok()?;
+    let (other_percent_remaining, orb_percent_remaining, reset) =
+        if let Some(usage) = legacy_usage.captures(details) {
+            (
+                usage.get(1).and_then(|value| value.as_str().parse().ok()),
+                usage.get(2).and_then(|value| value.as_str().parse().ok()),
+                usage.get(3).map(|value| value.as_str().trim().to_string()),
+            )
+        } else {
+            let usage = current_usage.captures(details)?;
+            let reset = Regex::new(r"(?i)(resets upon renewal[^,\r\n]*)")
+                .ok()?
+                .captures(details)
+                .and_then(|captures| captures.get(1))
+                .map(|value| value.as_str().trim().to_string());
+            (
+                usage.get(1).and_then(|value| value.as_str().parse().ok()),
+                usage.get(2).and_then(|value| value.as_str().parse().ok()),
+                reset,
+            )
+        };
     let orb_runtime = Regex::new(r"(?im)^Total Orb runtime:\s*([^\r\n(]+)")
         .ok()?
         .captures(&cleaned)
@@ -414,17 +443,11 @@ fn extract_amp_usage(output: &str) -> Option<AmpUsage> {
             .get(1)
             .or_else(|| subscription.get(2))
             .map(|value| value.as_str().trim().to_string()),
-        other_percent_remaining: subscription
-            .get(3)
-            .and_then(|value| value.as_str().parse().ok()),
-        orb_percent_remaining: subscription
-            .get(4)
-            .and_then(|value| value.as_str().parse().ok()),
+        other_percent_remaining,
+        orb_percent_remaining,
         orb_runtime,
         individual_credits_remaining,
-        reset: subscription
-            .get(5)
-            .map(|value| value.as_str().trim().to_string()),
+        reset,
     })
 }
 
@@ -534,6 +557,24 @@ mod tests {
         assert_eq!(
             usage.reset.as_deref(),
             Some("resets upon renewal in 1 month")
+        );
+    }
+
+    #[test]
+    fn extracts_current_amp_subscription_format() {
+        let output = "Signed in as user@example.com\n**Amp Megawatt Subscription:** agent usage $18.50 of $20 remaining (93%), orb usage 746.3h of 750h a1.small orb hours remaining (100%) - period 2026-08-22 to 2026-09-22, resets upon renewal in 20 days\n**Individual credits:** $11.01 remaining (set up auto-reload to avoid running out)\n\nRange: 2026-08-22T08:00:40.140Z to 2026-09-01T12:38:33.621Z (end exclusive; current subscription period so far)\nTotal Orb runtime: 3h9m22.132s (11,362,132 ms)\n";
+        let usage = extract_amp_usage(output).expect("usage");
+        assert_eq!(usage.plan.as_deref(), Some("Megawatt"));
+        assert_eq!(usage.other_percent_remaining, Some(93.0));
+        assert_eq!(usage.orb_percent_remaining, Some(100.0));
+        assert_eq!(usage.orb_runtime.as_deref(), Some("3h9m22.132s"));
+        assert_eq!(
+            usage.individual_credits_remaining.as_deref(),
+            Some("$11.01")
+        );
+        assert_eq!(
+            usage.reset.as_deref(),
+            Some("resets upon renewal in 20 days")
         );
     }
 
