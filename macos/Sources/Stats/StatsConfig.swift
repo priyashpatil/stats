@@ -52,20 +52,17 @@ struct SectionsConfig: Codable, Equatable {
   var system: Bool
   var ai: Bool
   var ampActivity: Bool
-  var codexActivity: Bool
 
   init(
     clocks: Bool = true,
     system: Bool = true,
     ai: Bool = true,
-    ampActivity: Bool = true,
-    codexActivity: Bool = true
+    ampActivity: Bool = true
   ) {
     self.clocks = clocks
     self.system = system
     self.ai = ai
     self.ampActivity = ampActivity
-    self.codexActivity = codexActivity
   }
 
   enum CodingKeys: String, CodingKey {
@@ -73,7 +70,6 @@ struct SectionsConfig: Codable, Equatable {
     case system
     case ai
     case ampActivity = "amp_activity"
-    case codexActivity = "codex_activity"
   }
 
   init(from decoder: Decoder) throws {
@@ -82,7 +78,6 @@ struct SectionsConfig: Codable, Equatable {
     system = try container.decode(Bool.self, forKey: .system)
     ai = try container.decode(Bool.self, forKey: .ai)
     ampActivity = try container.decode(Bool.self, forKey: .ampActivity)
-    codexActivity = try container.decode(Bool.self, forKey: .codexActivity)
   }
 }
 
@@ -91,20 +86,17 @@ struct SectionDisplayConfig: Codable, Equatable {
   var system: SystemDisplayConfig
   var ai: AIDisplayConfig
   var ampActivity: AmpActivityDisplayConfig
-  var codexActivity: CodexActivityDisplayConfig
 
   init(
     clocks: ClocksDisplayConfig = ClocksDisplayConfig(),
     system: SystemDisplayConfig = SystemDisplayConfig(),
     ai: AIDisplayConfig = AIDisplayConfig(),
-    ampActivity: AmpActivityDisplayConfig = AmpActivityDisplayConfig(),
-    codexActivity: CodexActivityDisplayConfig = CodexActivityDisplayConfig()
+    ampActivity: AmpActivityDisplayConfig = AmpActivityDisplayConfig()
   ) {
     self.clocks = clocks
     self.system = system
     self.ai = ai
     self.ampActivity = ampActivity
-    self.codexActivity = codexActivity
   }
 
   enum CodingKeys: String, CodingKey {
@@ -112,7 +104,6 @@ struct SectionDisplayConfig: Codable, Equatable {
     case system
     case ai
     case ampActivity = "amp_activity"
-    case codexActivity = "codex_activity"
   }
 
   init(from decoder: Decoder) throws {
@@ -121,7 +112,6 @@ struct SectionDisplayConfig: Codable, Equatable {
     system = try container.decode(SystemDisplayConfig.self, forKey: .system)
     ai = try container.decode(AIDisplayConfig.self, forKey: .ai)
     ampActivity = try container.decode(AmpActivityDisplayConfig.self, forKey: .ampActivity)
-    codexActivity = try container.decode(CodexActivityDisplayConfig.self, forKey: .codexActivity)
   }
 }
 
@@ -208,28 +198,24 @@ struct AIDisplayConfig: Codable, Equatable {
   var ampPlan = true
   var ampOrbs = true
   var ampCredits = true
-  var codexQuota = true
 
   enum CodingKeys: String, CodingKey {
     case heading
     case ampPlan = "amp_plan"
     case ampOrbs = "amp_orbs"
     case ampCredits = "amp_credits"
-    case codexQuota = "codex_quota"
   }
 
   init(
     heading: Bool = true,
     ampPlan: Bool = true,
     ampOrbs: Bool = true,
-    ampCredits: Bool = true,
-    codexQuota: Bool = true
+    ampCredits: Bool = true
   ) {
     self.heading = heading
     self.ampPlan = ampPlan
     self.ampOrbs = ampOrbs
     self.ampCredits = ampCredits
-    self.codexQuota = codexQuota
   }
 
   init(from decoder: Decoder) throws {
@@ -238,10 +224,9 @@ struct AIDisplayConfig: Codable, Equatable {
     ampPlan = try container.decode(Bool.self, forKey: .ampPlan)
     ampOrbs = try container.decode(Bool.self, forKey: .ampOrbs)
     ampCredits = try container.decode(Bool.self, forKey: .ampCredits)
-    codexQuota = try container.decode(Bool.self, forKey: .codexQuota)
   }
 
-  var hasEnabledOption: Bool { heading || ampPlan || ampOrbs || ampCredits || codexQuota }
+  var hasEnabledOption: Bool { heading || ampPlan || ampOrbs || ampCredits }
 }
 
 struct AmpActivityDisplayConfig: Codable, Equatable {
@@ -297,62 +282,22 @@ struct AmpActivityDisplayConfig: Codable, Equatable {
   }
 }
 
-struct CodexActivityDisplayConfig: Codable, Equatable {
-  var heading = true
-  var calendar = true
-  var overview = true
-  var dailyActivity = true
-
-  enum CodingKeys: String, CodingKey {
-    case heading
-    case calendar
-    case overview
-    case dailyActivity = "daily_activity"
-  }
-
-  init(
-    heading: Bool = true,
-    calendar: Bool = true,
-    overview: Bool = true,
-    dailyActivity: Bool = true
-  ) {
-    self.heading = heading
-    self.calendar = calendar
-    self.overview = overview
-    self.dailyActivity = dailyActivity
-  }
-
-  init(from decoder: Decoder) throws {
-    let container = try decoder.container(keyedBy: CodingKeys.self)
-    heading = try container.decode(Bool.self, forKey: .heading)
-    calendar = try container.decode(Bool.self, forKey: .calendar)
-    overview = try container.decode(Bool.self, forKey: .overview)
-    dailyActivity = try container.decode(Bool.self, forKey: .dailyActivity)
-  }
-
-  var hasEnabledOption: Bool { heading || calendar || overview || dailyActivity }
-}
-
 struct RefreshConfig: Codable {
-  var codexSeconds: Int
   var ampSeconds: Int
   var storageSeconds: Int
 
-  init(codexSeconds: Int = 60, ampSeconds: Int = 300, storageSeconds: Int = 300) {
-    self.codexSeconds = codexSeconds
+  init(ampSeconds: Int = 300, storageSeconds: Int = 300) {
     self.ampSeconds = ampSeconds
     self.storageSeconds = storageSeconds
   }
 
   enum CodingKeys: String, CodingKey {
-    case codexSeconds = "codex_seconds"
     case ampSeconds = "amp_seconds"
     case storageSeconds = "storage_seconds"
   }
 
   init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
-    codexSeconds = try container.decode(Int.self, forKey: .codexSeconds)
     ampSeconds = try container.decode(Int.self, forKey: .ampSeconds)
     storageSeconds = try container.decode(Int.self, forKey: .storageSeconds)
   }
@@ -545,19 +490,11 @@ final class StatsConfigStore {
         config.sectionDisplay.ampActivity.hasEnabledOption,
         "amp_activity"
       ),
-      (
-        config.sections.codexActivity,
-        config.sectionDisplay.codexActivity.hasEnabledOption,
-        "codex_activity"
-      ),
     ]
     for (enabled, hasEnabledOption, section) in requirements where enabled && !hasEnabledOption {
       throw ConfigError.invalid(
         "sections.\(section) requires at least one section_display.\(section) option"
       )
-    }
-    guard config.refresh.codexSeconds >= 5 else {
-      throw ConfigError.invalid("refresh.codex_seconds must be at least 5")
     }
     guard config.refresh.ampSeconds >= 60 else {
       throw ConfigError.invalid("refresh.amp_seconds must be at least 60")

@@ -12,7 +12,6 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     (title: "System", symbol: "cpu"),
     (title: "AI", symbol: "sparkles"),
     (title: "Amp Activity", symbol: "chart.bar"),
-    (title: "Codex Activity", symbol: "calendar"),
     (title: "About", symbol: "info.circle"),
   ]
   private let sidebarTable = NSTableView()
@@ -133,7 +132,6 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
           ("Amp plan usage", "ampPlan", sectionDisplay.ai.ampPlan),
           ("Amp Orbs", "ampOrbs", sectionDisplay.ai.ampOrbs),
           ("Amp credits", "ampCredits", sectionDisplay.ai.ampCredits),
-          ("Codex quota", "codexQuota", sectionDisplay.ai.codexQuota),
         ]
       ),
       sectionViewController(
@@ -149,18 +147,6 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
           ("Models", "models", sectionDisplay.ampActivity.models),
           ("Sources", "sources", sectionDisplay.ampActivity.sources),
           ("Sync alerts", "syncAlerts", sectionDisplay.ampActivity.syncAlerts),
-        ]
-      ),
-      sectionViewController(
-        title: "Codex Activity",
-        help: "Choose which Codex activity details Stats displays.",
-        section: "codexActivity",
-        enabled: sections.codexActivity,
-        choices: [
-          ("Section heading", "heading", sectionDisplay.codexActivity.heading),
-          ("Activity calendar", "calendar", sectionDisplay.codexActivity.calendar),
-          ("Usage overview", "overview", sectionDisplay.codexActivity.overview),
-          ("Daily activity", "dailyActivity", sectionDisplay.codexActivity.dailyActivity),
         ]
       ),
       AboutViewController(),
@@ -672,7 +658,6 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     case "system": sections.system
     case "ai": sections.ai
     case "ampActivity": sections.ampActivity
-    case "codexActivity": sections.codexActivity
     default: false
     }
   }
@@ -683,7 +668,6 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     case "system": sections.system = enabled
     case "ai": sections.ai = enabled
     case "ampActivity": sections.ampActivity = enabled
-    case "codexActivity": sections.codexActivity = enabled
     default: break
     }
   }
@@ -694,7 +678,6 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     case "system": display.system.hasEnabledOption
     case "ai": display.ai.hasEnabledOption
     case "ampActivity": display.ampActivity.hasEnabledOption
-    case "codexActivity": display.codexActivity.hasEnabledOption
     default: false
     }
   }
@@ -705,7 +688,6 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     case "system": display.system = SystemDisplayConfig()
     case "ai": display.ai = AIDisplayConfig()
     case "ampActivity": display.ampActivity = AmpActivityDisplayConfig()
-    case "codexActivity": display.codexActivity = CodexActivityDisplayConfig()
     default: break
     }
   }
@@ -732,7 +714,6 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     case ("ai", "ampPlan"): display.ai.ampPlan = enabled
     case ("ai", "ampOrbs"): display.ai.ampOrbs = enabled
     case ("ai", "ampCredits"): display.ai.ampCredits = enabled
-    case ("ai", "codexQuota"): display.ai.codexQuota = enabled
     case ("ampActivity", "heading"): display.ampActivity.heading = enabled
     case ("ampActivity", "calendar"): display.ampActivity.calendar = enabled
     case ("ampActivity", "dailyActivity"): display.ampActivity.dailyActivity = enabled
@@ -740,10 +721,6 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     case ("ampActivity", "models"): display.ampActivity.models = enabled
     case ("ampActivity", "sources"): display.ampActivity.sources = enabled
     case ("ampActivity", "syncAlerts"): display.ampActivity.syncAlerts = enabled
-    case ("codexActivity", "heading"): display.codexActivity.heading = enabled
-    case ("codexActivity", "calendar"): display.codexActivity.calendar = enabled
-    case ("codexActivity", "overview"): display.codexActivity.overview = enabled
-    case ("codexActivity", "dailyActivity"): display.codexActivity.dailyActivity = enabled
     default: break
     }
   }
@@ -765,7 +742,6 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     case ("ai", "ampPlan"): selectedSectionDisplay.ai.ampPlan
     case ("ai", "ampOrbs"): selectedSectionDisplay.ai.ampOrbs
     case ("ai", "ampCredits"): selectedSectionDisplay.ai.ampCredits
-    case ("ai", "codexQuota"): selectedSectionDisplay.ai.codexQuota
     case ("ampActivity", "heading"): selectedSectionDisplay.ampActivity.heading
     case ("ampActivity", "calendar"): selectedSectionDisplay.ampActivity.calendar
     case ("ampActivity", "dailyActivity"): selectedSectionDisplay.ampActivity.dailyActivity
@@ -773,10 +749,6 @@ final class SettingsWindowController: NSWindowController, NSTableViewDataSource,
     case ("ampActivity", "models"): selectedSectionDisplay.ampActivity.models
     case ("ampActivity", "sources"): selectedSectionDisplay.ampActivity.sources
     case ("ampActivity", "syncAlerts"): selectedSectionDisplay.ampActivity.syncAlerts
-    case ("codexActivity", "heading"): selectedSectionDisplay.codexActivity.heading
-    case ("codexActivity", "calendar"): selectedSectionDisplay.codexActivity.calendar
-    case ("codexActivity", "overview"): selectedSectionDisplay.codexActivity.overview
-    case ("codexActivity", "dailyActivity"): selectedSectionDisplay.codexActivity.dailyActivity
     default: false
     }
   }
