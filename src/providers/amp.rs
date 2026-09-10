@@ -394,7 +394,7 @@ fn epoch_seconds() -> f64 {
 fn extract_amp_usage(output: &str) -> Option<AmpUsage> {
     let cleaned = strip_ansi(output).replace("**", "");
     let subscription = Regex::new(
-        r"(?im)^(?:Amp\s+([^:\r\n]+?)\s+Subscription|Subscription\s+([^:\r\n]+)):\s*([^\r\n]+)",
+        r"(?im)^(?:Amp\s+([^:\r\n]+?)\s+(?:Subscription|Tier)|(?:Subscription|Tier)\s+([^:\r\n]+)):\s*([^\r\n]+)",
     )
     .ok()?
     .captures(&cleaned)?;
@@ -575,6 +575,24 @@ mod tests {
         assert_eq!(
             usage.reset.as_deref(),
             Some("resets upon renewal in 20 days")
+        );
+    }
+
+    #[test]
+    fn extracts_current_amp_tier_format() {
+        let output = "Signed in as user@example.com\n**Amp Megawatt Tier:** agent usage $19.65 of $20 remaining (98%), orb usage 750h of 750h a1.small orb hours remaining (100%) - period 2026-08-22 to 2026-09-22, resets upon renewal in 12 days\n**Individual credits:** $11.01 remaining (set up auto-reload to avoid running out) - https://ampcode.com/settings\n\nRange: 2026-08-22T08:00:40.140Z to 2026-09-10T05:36:47.570Z (end exclusive; current tier period so far)\nTotal Orb runtime: 12h38m21.423s (45,501,423 ms)\n";
+        let usage = extract_amp_usage(output).expect("usage");
+        assert_eq!(usage.plan.as_deref(), Some("Megawatt"));
+        assert_eq!(usage.other_percent_remaining, Some(98.0));
+        assert_eq!(usage.orb_percent_remaining, Some(100.0));
+        assert_eq!(usage.orb_runtime.as_deref(), Some("12h38m21.423s"));
+        assert_eq!(
+            usage.individual_credits_remaining.as_deref(),
+            Some("$11.01")
+        );
+        assert_eq!(
+            usage.reset.as_deref(),
+            Some("resets upon renewal in 12 days")
         );
     }
 
