@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use std::{env, io};
 use std::{fs, path::Path, time::SystemTime};
 
-use chrono::{DateTime, Local, NaiveDate, Utc};
+use chrono::{DateTime, Local, NaiveDate, TimeZone, Utc};
 use chrono_tz::Tz;
 use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::{
@@ -21,10 +21,12 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
 use ratatui::{Frame, Terminal};
+use serde_json::Value;
+
 const BAR_FILLED: &str = "━";
 const BAR_EMPTY: &str = "·";
 
-const LABEL_WIDTH: usize = 9;
+const CODEX_GUTTER_WIDTH: usize = 9;
 const AI_LABEL_GAP: usize = 1;
 
 #[derive(Debug, Clone, Copy)]
@@ -116,7 +118,10 @@ fn equal_column_widths(width: usize, count: usize) -> Vec<usize> {
         .collect()
 }
 
-use crate::model::{AmpActivityUsage, AmpUsage, AppState, Clock, ProviderState, SystemMetrics};
+use crate::model::{
+    AmpActivityUsage, AmpUsage, AppState, Clock, CodexActivityUsage, ProviderState, SystemMetrics,
+};
+use crate::providers::codex::{codex_weekly_window, left_percent, ordered_buckets};
 
 mod activity;
 use crate::config::{
@@ -124,7 +129,10 @@ use crate::config::{
     SystemDisplayConfig,
 };
 use crate::model::Args;
-use activity::{amp_activity_history_days, amp_activity_sync_message, render_amp_activity};
+use activity::{
+    amp_activity_history_days, amp_activity_sync_message, render_amp_activity,
+    render_codex_activity,
+};
 
 #[derive(Clone, Copy)]
 struct Dashboard<'a> {
@@ -326,11 +334,19 @@ fn stats_lines(state: &AppState, dashboard: Dashboard<'_>, width: usize) -> Vec<
         render_system(&mut lines, &state.system, &display.system, width, theme);
     }
     if sections.ai {
-        render_ai_quotas(&mut lines, &state.amp, &display.ai, width, theme);
+        render_ai_quotas(
+            &mut lines,
+            &state.amp,
+            &state.codex,
+            &display.ai,
+            width,
+            theme,
+        );
     }
     render_activity_sections(
         &mut lines,
         &state.amp_activity,
+        &state.codex_activity,
         dashboard,
         width,
         Utc::now().date_naive(),
@@ -513,6 +529,7 @@ fn render_system(
 fn render_ai_quotas(
     lines: &mut Vec<Line<'static>>,
     amp: &ProviderState<AmpUsage>,
+    codex: &ProviderState<Value>,
     display: &AiDisplayConfig,
     width: usize,
     theme: Theme,
@@ -527,6 +544,10 @@ fn render_ai_quotas(
     if display.amp_plan || display.amp_orbs || display.amp_credits {
         collect_amp_ai_rows(&mut rows, &mut statuses, &mut details, amp, display, theme);
     }
+    if display.codex_quota {
+        collect_codex_ai_rows(&mut rows, &mut statuses, codex);
+    }
+
     if display.heading && (!rows.is_empty() || !statuses.is_empty() || !details.is_empty()) {
         lines.push(Line::default());
     }
@@ -543,19 +564,22 @@ fn render_ai_at(
     lines: &mut Vec<Line<'static>>,
     amp: &ProviderState<AmpUsage>,
     amp_activity: &ProviderState<AmpActivityUsage>,
+    codex: &ProviderState<Value>,
+    codex_activity: &ProviderState<CodexActivityUsage>,
     width: usize,
     today: NaiveDate,
 ) {
     let display = SectionDisplayConfig::default();
     let sections = SectionsConfig::default();
     let dashboard = Dashboard::new(&[], &sections, &display, ColorTheme::default());
-    render_ai_quotas(lines, amp, &display.ai, width, dashboard.theme);
-    render_activity_sections(lines, amp_activity, dashboard, width, today);
+    render_ai_quotas(lines, amp, codex, &display.ai, width, dashboard.theme);
+    render_activity_sections(lines, amp_activity, codex_activity, dashboard, width, today);
 }
 
 fn render_activity_sections(
     lines: &mut Vec<Line<'static>>,
     amp: &ProviderState<AmpActivityUsage>,
+    codex: &ProviderState<CodexActivityUsage>,
     dashboard: Dashboard<'_>,
     width: usize,
     today: NaiveDate,
@@ -583,6 +607,23 @@ fn render_activity_sections(
             render_amp_activity(lines, amp, width, today, amp_display, theme);
         }
         if amp_display.heading || has_data {
+            lines.push(Line::default());
+        }
+    }
+    let codex_display = &display.codex_activity;
+    if sections.codex_activity {
+        if codex_display.heading {
+            section(lines, "Codex Activity", "", width, theme);
+        }
+        let has_data =
+            codex_display.calendar || codex_display.overview || codex_display.daily_activity;
+        if codex_display.heading && has_data {
+            lines.push(Line::default());
+        }
+        if has_data {
+            render_codex_activity(lines, codex, width, today, codex_display, theme);
+        }
+        if codex_display.heading || has_data {
             lines.push(Line::default());
         }
     }
@@ -705,6 +746,38 @@ fn amp_compact_reset_label_at(reset: &str, today: NaiveDate) -> String {
     format!("in {amount}{unit}")
 }
 
+fn collect_codex_ai_rows(
+    rows: &mut Vec<AiQuotaRow>,
+    statuses: &mut Vec<Line<'static>>,
+    codex: &ProviderState<Value>,
+) {
+    if let Some(error) = &codex.error {
+        statuses.push(ai_status_row(
+            "Codex Pro",
+            format!("Error: {error}"),
+            Color::Red,
+        ));
+        return;
+    }
+    let Some(result) = &codex.result else {
+        statuses.push(ai_status_row(
+            "Codex Pro",
+            "Loading Codex usage status...",
+            Color::Yellow,
+        ));
+        return;
+    };
+    for snapshot in ordered_buckets(result) {
+        if let Some(window) = codex_weekly_window(snapshot) {
+            rows.push(AiQuotaRow {
+                label: "Codex Pro".into(),
+                percent_left: left_percent(window),
+                reset: Some(codex_compact_reset_label(window)),
+            });
+        }
+    }
+}
+
 fn render_ai_quota_rows(
     lines: &mut Vec<Line<'static>>,
     rows: Vec<AiQuotaRow>,
@@ -721,7 +794,7 @@ fn render_ai_quota_rows(
         .map(|tail| tail.chars().count())
         .max()
         .unwrap_or_default();
-    let fixed_width = LABEL_WIDTH + AI_LABEL_GAP + VALUE_GAP + VALUE_WIDTH;
+    let fixed_width = CODEX_GUTTER_WIDTH + AI_LABEL_GAP + VALUE_GAP + VALUE_WIDTH;
     let available = width.saturating_sub(fixed_width);
     let show_tail = tail_width > 0 && available >= 4 + TAIL_GAP + tail_width;
     let bar_width = if show_tail {
@@ -732,7 +805,7 @@ fn render_ai_quota_rows(
 
     for (row, tail) in rows.into_iter().zip(tails) {
         if width < fixed_width {
-            let label_width = LABEL_WIDTH.min(width);
+            let label_width = CODEX_GUTTER_WIDTH.min(width);
             let value_width = width.saturating_sub(label_width);
             let color = color_for_remaining(row.percent_left, theme);
             let mut spans = vec![dim(fixed(&row.label, label_width))];
@@ -748,7 +821,7 @@ fn render_ai_quota_rows(
         }
         let color = color_for_remaining(row.percent_left, theme);
         let mut spans = vec![
-            dim(fixed(&row.label, LABEL_WIDTH)),
+            dim(fixed(&row.label, CODEX_GUTTER_WIDTH)),
             Span::raw(" ".repeat(AI_LABEL_GAP)),
         ];
         if bar_width >= 4 {
@@ -774,7 +847,7 @@ fn ai_quota_tail(row: &AiQuotaRow) -> String {
 
 fn ai_status_row(label: &str, message: impl Into<String>, color: Color) -> Line<'static> {
     Line::from(vec![
-        dim(fixed(label, LABEL_WIDTH)),
+        dim(fixed(label, CODEX_GUTTER_WIDTH)),
         Span::raw(" ".repeat(AI_LABEL_GAP)),
         span(message.into(), color, true),
     ])
@@ -835,6 +908,54 @@ fn bar_spans(percent: f64, width: usize, color: Color) -> Vec<Span<'static>> {
     ]
 }
 
+fn window_label(window: &Value) -> String {
+    let minutes = window.get("windowDurationMins").and_then(Value::as_i64);
+    match minutes {
+        Some(300) => "5h".into(),
+        Some(10080) => "Weekly".into(),
+        Some(value) if value % 60 == 0 => format!("{}h", value / 60),
+        Some(value) => format!("{value}m"),
+        None => "Limit".into(),
+    }
+}
+
+fn codex_compact_reset_label(window: &Value) -> String {
+    let Some(epoch) = window.get("resetsAt").and_then(Value::as_i64) else {
+        return "unknown".into();
+    };
+    let reset = Local
+        .timestamp_opt(epoch, 0)
+        .single()
+        .unwrap_or_else(Local::now);
+    if reset.date_naive() == Local::now().date_naive() {
+        reset.format("%-I:%M%P").to_string()
+    } else {
+        reset.format("%-d %b").to_string()
+    }
+}
+
+fn reset_label(window: &Value) -> String {
+    let Some(epoch) = window.get("resetsAt").and_then(Value::as_i64) else {
+        return "reset unknown".into();
+    };
+    let reset = Local
+        .timestamp_opt(epoch, 0)
+        .single()
+        .unwrap_or_else(Local::now);
+    if reset.date_naive() == Local::now().date_naive() {
+        format!(
+            "resets {}",
+            reset.format("%I:%M %p").to_string().to_lowercase()
+        )
+    } else {
+        format!(
+            "resets {} {}",
+            reset.format("%I:%M %p").to_string().to_lowercase(),
+            reset.format("%-d %b")
+        )
+    }
+}
+
 fn color_for_remaining(percent: f64, theme: Theme) -> Color {
     if percent <= 15.0 {
         Color::Red
@@ -893,7 +1014,9 @@ pub(crate) fn print_once(
     while Instant::now() < deadline {
         let ready = {
             let state = state.lock().unwrap();
-            !display.amp_ai_needed(sections) || provider_ready_for_once(&state.amp, &started_at)
+            (!display.amp_ai_needed(sections) || provider_ready_for_once(&state.amp, &started_at))
+                && (!display.codex_ai_needed(sections)
+                    || provider_ready_for_once(&state.codex, &started_at))
         };
         if ready {
             break;
@@ -936,9 +1059,35 @@ pub(crate) fn print_once(
             println!("Storage {:.0}% free", state.system.storage_percent_free);
         }
     }
-    if sections.ai && display.amp_ai_needed(sections) {
-        for line in amp_once_lines(&state.amp, &display.ai) {
-            println!("{line}");
+    if sections.ai {
+        if display.amp_ai_needed(sections) {
+            for line in amp_once_lines(&state.amp, &display.ai) {
+                println!("{line}");
+            }
+        }
+        if display.ai.codex_quota
+            && let Some(error) = &state.codex.error
+        {
+            println!("Codex error: {error}");
+        } else if display.ai.codex_quota
+            && let Some(result) = &state.codex.result
+        {
+            for snapshot in ordered_buckets(result) {
+                let plan = snapshot
+                    .get("planType")
+                    .and_then(Value::as_str)
+                    .map(|plan| if plan == "prolite" { "Pro" } else { plan })
+                    .unwrap_or("");
+                println!("Codex {plan}");
+                if let Some(window) = codex_weekly_window(snapshot) {
+                    println!(
+                        "{} {:.0}% left {}",
+                        window_label(window),
+                        left_percent(window),
+                        reset_label(window)
+                    );
+                }
+            }
         }
     }
 }
@@ -1001,20 +1150,24 @@ fn provider_ready_for_once<T>(provider: &ProviderState<T>, started_at: &DateTime
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
     fn date(value: &str) -> NaiveDate {
         NaiveDate::parse_from_str(value, "%Y-%m-%d").unwrap()
     }
 
-    fn activity(buckets: &[(&str, u64)]) -> AmpActivityUsage {
-        AmpActivityUsage {
-            daily_usage_buckets: buckets
-                .iter()
-                .map(|(date, tokens)| crate::model::AmpDailyUsageBucket {
-                    date: (*date).into(),
-                    tokens: *tokens,
-                    ..crate::model::AmpDailyUsageBucket::default()
-                })
-                .collect(),
+    fn activity(buckets: &[(&str, u64)]) -> CodexActivityUsage {
+        CodexActivityUsage {
+            daily_usage_buckets: Some(
+                buckets
+                    .iter()
+                    .map(|(start_date, tokens)| crate::model::CodexDailyUsageBucket {
+                        start_date: (*start_date).into(),
+                        tokens: *tokens,
+                    })
+                    .collect(),
+            ),
+            summary: None,
         }
     }
 
@@ -1122,6 +1275,38 @@ mod tests {
     }
 
     #[test]
+    fn renders_only_one_codex_weekly_row() {
+        let codex = ProviderState {
+            result: Some(json!({
+                "rateLimitsByLimitId": {
+                    "codex": {
+                        "primary": {
+                            "resetsAt": 1784696828_i64,
+                            "usedPercent": 25,
+                            "windowDurationMins": 300
+                        },
+                        "secondary": {
+                            "resetsAt": 1784696828_i64,
+                            "usedPercent": 4,
+                            "windowDurationMins": 10080
+                        }
+                    }
+                }
+            })),
+            ..ProviderState::default()
+        };
+        let mut rows = Vec::new();
+        let mut statuses = Vec::new();
+
+        collect_codex_ai_rows(&mut rows, &mut statuses, &codex);
+
+        assert!(statuses.is_empty());
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].label, "Codex Pro");
+        assert_eq!(rows[0].percent_left, 96.0);
+    }
+
+    #[test]
     fn compacts_ai_reset_labels() {
         let today = date("2026-08-22");
         for (reset, expected) in [
@@ -1135,12 +1320,19 @@ mod tests {
         ] {
             assert_eq!(amp_compact_reset_label_at(reset, today), expected);
         }
+
+        let future = Local::now() + chrono::Duration::days(7);
+        let window = json!({ "resetsAt": future.timestamp() });
+        assert_eq!(
+            codex_compact_reset_label(&window),
+            future.format("%-d %b").to_string()
+        );
     }
 
     #[test]
-    fn keeps_a_quota_row_within_narrow_widths() {
+    fn keeps_the_weekly_row_within_narrow_widths() {
         let row = AiQuotaRow {
-            label: "Amp Orbs".into(),
+            label: "Codex Pro".into(),
             percent_left: 96.0,
             reset: Some("09:48am 8 Aug".into()),
         };
@@ -1169,7 +1361,7 @@ mod tests {
                 reset: Some("22 Sep".into()),
             },
             AiQuotaRow {
-                label: "Amp Orbs".into(),
+                label: "Codex Pro".into(),
                 percent_left: 95.0,
                 reset: Some("27 Aug".into()),
             },
@@ -1273,7 +1465,8 @@ mod tests {
             clocks: false,
             system: false,
             ai: false,
-            amp_activity: true,
+            amp_activity: false,
+            codex_activity: true,
         };
         let display = SectionDisplayConfig::default();
         let dashboard = Dashboard::new(&[], &sections, &display, ColorTheme::default());
@@ -1281,10 +1474,11 @@ mod tests {
         let lines = stats_lines(&AppState::default(), dashboard, 58);
         let text = lines.iter().map(line_text).collect::<Vec<_>>().join("\n");
 
-        assert!(text.contains("AMP ACTIVITY"));
+        assert!(text.contains("CODEX ACTIVITY"));
         assert!(!text.contains("CLOCKS"));
         assert!(!text.contains("SYSTEM"));
         assert!(!text.contains("\nAI "));
+        assert!(!text.contains("AMP ACTIVITY"));
     }
 
     #[test]
@@ -1294,6 +1488,7 @@ mod tests {
             system: true,
             ai: true,
             amp_activity: false,
+            codex_activity: false,
         };
         let display = SectionDisplayConfig {
             clocks: ClocksDisplayConfig {
@@ -1316,6 +1511,7 @@ mod tests {
                 amp_plan: false,
                 amp_orbs: true,
                 amp_credits: false,
+                codex_quota: false,
             },
             ..SectionDisplayConfig::default()
         };
@@ -1351,7 +1547,7 @@ mod tests {
     }
 
     #[test]
-    fn separates_amp_usage_from_activity() {
+    fn separates_activity_from_the_codex_quota() {
         let amp = ProviderState {
             result: Some(AmpUsage {
                 plan: Some("Megawatt".into()),
@@ -1363,17 +1559,43 @@ mod tests {
             }),
             ..ProviderState::default()
         };
+        let codex = ProviderState {
+            result: Some(json!({
+                "rateLimitsByLimitId": {
+                    "codex": {
+                        "primary": {
+                            "resetsAt": 1784696828_i64,
+                            "usedPercent": 4,
+                            "windowDurationMins": 10080
+                        }
+                    }
+                }
+            })),
+            ..ProviderState::default()
+        };
         let activity = ProviderState {
             result: Some(activity(&[("2026-07-12", 1), ("2026-08-02", 2)])),
             ..ProviderState::default()
         };
         let mut lines = Vec::new();
 
-        render_ai_at(&mut lines, &amp, &activity, 58, date("2026-08-02"));
+        render_ai_at(
+            &mut lines,
+            &amp,
+            &ProviderState::default(),
+            &codex,
+            &activity,
+            58,
+            date("2026-08-02"),
+        );
         let text = lines.iter().map(line_text).collect::<Vec<_>>();
         let megawatt = text
             .iter()
             .position(|line| line.contains("Megawatt"))
+            .unwrap();
+        let quota = text
+            .iter()
+            .position(|line| line.contains("Codex Pro"))
             .unwrap();
         let orbs = text
             .iter()
@@ -1387,10 +1609,16 @@ mod tests {
             .iter()
             .position(|line| line.starts_with("AMP ACTIVITY"))
             .unwrap();
+        let codex_activity = text
+            .iter()
+            .position(|line| line.contains("CODEX ACTIVITY"))
+            .unwrap();
+
         assert!(text[0].starts_with("AI"));
         assert!(text.iter().all(|line| line.chars().count() <= 58));
         assert!(megawatt < orbs);
-        assert!(orbs < credits);
+        assert!(orbs < quota);
+        assert!(quota < credits);
         assert!(text[orbs].contains("65% left"));
         assert!(!text[orbs].contains("1h20m12.210s"));
         assert!(text[megawatt].contains("Megawatt"));
@@ -1400,8 +1628,9 @@ mod tests {
         assert!(text[orbs].contains(&reset));
         assert!(text[credits].contains("$1.01 remaining"));
         assert!(credits < amp_activity);
-        assert!(text[amp_activity + 2].contains("Jul"));
-        assert!(text[amp_activity + 3].contains("Sun"));
+        assert!(amp_activity < codex_activity);
+        assert!(text[codex_activity + 2].contains("Jul"));
+        assert!(text[codex_activity + 3].contains("Sun"));
     }
 
     #[test]

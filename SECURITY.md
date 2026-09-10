@@ -10,4 +10,4 @@ You should receive an acknowledgement within seven days. Please allow time for a
 
 ## Scope
 
-Security reports about Stats and its installer are in scope. Vulnerabilities in Amp, SwiftTerm, Rust crates, or other dependencies should also be reported to the relevant upstream project.
+Security reports about Stats and its installer are in scope. Vulnerabilities in Amp, Codex, SwiftTerm, Rust crates, or other dependencies should also be reported to the relevant upstream project.

@@ -37,10 +37,7 @@ service="gui/$(id -u)/com.priyashpatil.stats"
 
 cargo install --path "$root" --root "$HOME/.cargo" --force --locked
 for command in codex-usage codex-usage-status; do
-    legacy_link="$HOME/.cargo/bin/$command"
-    if [ -L "$legacy_link" ] && [ "$(readlink "$legacy_link")" = "$HOME/.cargo/bin/stats" ]; then
-        rm "$legacy_link"
-    fi
+    ln -sfn "$HOME/.cargo/bin/stats" "$HOME/.cargo/bin/$command"
 done
 
 "$macos/build-app.sh" "$app" "$HOME/.cargo/bin/stats"
