@@ -4,9 +4,12 @@ use chrono::{Datelike, Days, NaiveDate};
 use ratatui::style::Color;
 use ratatui::text::{Line, Span};
 
-use super::{LABEL_WIDTH, Theme, ai_status_row, dim, equal_column_widths, fixed, span};
-use crate::config::AmpActivityDisplayConfig;
-use crate::model::{AmpActivityUsage, AmpTokenCategory, ProviderState};
+use super::{CODEX_GUTTER_WIDTH, Theme, ai_status_row, dim, equal_column_widths, fixed, span};
+use crate::config::{AmpActivityDisplayConfig, CodexActivityDisplayConfig};
+use crate::model::{
+    AmpActivityUsage, AmpTokenCategory, CodexActivitySummary, CodexActivityUsage,
+    CodexDailyUsageBucket, DailyTokenUsage, ProviderState,
+};
 
 const ACTIVITY_MIN_GUTTER_WIDTH: usize = 5;
 const AMP_DETAIL_DAYS: u64 = 30;
@@ -27,6 +30,52 @@ struct ActivityCalendar {
     latest_date: NaiveDate,
     tokens_by_date: BTreeMap<NaiveDate, u64>,
     quartiles: [u64; 3],
+    summary: Option<CodexActivitySummary>,
+}
+
+pub(super) fn render_codex_activity(
+    lines: &mut Vec<Line<'static>>,
+    activity: &ProviderState<CodexActivityUsage>,
+    width: usize,
+    utc_today: NaiveDate,
+    display: &CodexActivityDisplayConfig,
+    theme: Theme,
+) {
+    if activity_week_capacity(width) == 0 {
+        return;
+    }
+    if let Some(error) = &activity.error {
+        lines.push(ai_status_row(
+            "Activity",
+            format!("Error: {error}"),
+            Color::Red,
+        ));
+        return;
+    }
+    let Some(result) = &activity.result else {
+        lines.push(ai_status_row(
+            "Activity",
+            "Loading token activity...",
+            Color::Yellow,
+        ));
+        return;
+    };
+    let Some(calendar) = activity_calendar(result, width, utc_today) else {
+        lines.push(Line::from(vec![
+            dim(fixed("Activity", CODEX_GUTTER_WIDTH)),
+            dim("unavailable"),
+        ]));
+        return;
+    };
+    render_activity_calendar(
+        lines,
+        &calendar,
+        width,
+        display.calendar,
+        display.overview,
+        display.daily_activity,
+        theme,
+    );
 }
 
 pub(super) fn render_amp_activity(
@@ -43,10 +92,9 @@ pub(super) fn render_amp_activity(
     if let Some(error) = &activity.error {
         lines.push(ai_status_row(
             "Activity",
-            "Cached data; refresh failed:",
+            format!("Cached data; refresh failed: {error}"),
             Color::Yellow,
         ));
-        lines.extend(activity_error_rows(error, width));
     }
     let Some(result) = &activity.result else {
         lines.push(ai_status_row(
@@ -56,7 +104,20 @@ pub(super) fn render_amp_activity(
         ));
         return;
     };
-    let Some(calendar) = activity_calendar(result, width, utc_today) else {
+    let codex_shaped = CodexActivityUsage {
+        daily_usage_buckets: Some(
+            result
+                .daily_usage_buckets
+                .iter()
+                .map(|bucket| CodexDailyUsageBucket {
+                    start_date: bucket.date.clone(),
+                    tokens: bucket.tokens,
+                })
+                .collect(),
+        ),
+        summary: None,
+    };
+    let Some(calendar) = activity_calendar(&codex_shaped, width, utc_today) else {
         return;
     };
     render_activity_calendar(
@@ -64,6 +125,7 @@ pub(super) fn render_amp_activity(
         &calendar,
         width,
         display.calendar,
+        false,
         display.daily_activity,
         theme,
     );
@@ -91,30 +153,6 @@ pub(super) fn render_amp_activity(
     }
 }
 
-fn activity_error_rows(error: &str, width: usize) -> Vec<Line<'static>> {
-    let content_width = width.saturating_sub(LABEL_WIDTH + 1).max(1);
-    let mut rows = Vec::new();
-    for paragraph in error.lines() {
-        let mut current = String::new();
-        for word in paragraph.split_whitespace() {
-            let next_width =
-                current.chars().count() + usize::from(!current.is_empty()) + word.chars().count();
-            if !current.is_empty() && next_width > content_width {
-                rows.push(ai_status_row("", current, Color::Yellow));
-                current = String::new();
-            }
-            if !current.is_empty() {
-                current.push(' ');
-            }
-            current.push_str(word);
-        }
-        if !current.is_empty() {
-            rows.push(ai_status_row("", current, Color::Yellow));
-        }
-    }
-    rows
-}
-
 pub(super) fn amp_activity_sync_message(
     activity: &ProviderState<AmpActivityUsage>,
     width: usize,
@@ -124,7 +162,20 @@ pub(super) fn amp_activity_sync_message(
     if activity.error.is_some() {
         return None;
     }
-    let calendar = activity_calendar(result, width, utc_today)?;
+    let codex_shaped = CodexActivityUsage {
+        daily_usage_buckets: Some(
+            result
+                .daily_usage_buckets
+                .iter()
+                .map(|bucket| CodexDailyUsageBucket {
+                    start_date: bucket.date.clone(),
+                    tokens: bucket.tokens,
+                })
+                .collect(),
+        ),
+        summary: None,
+    };
+    let calendar = activity_calendar(&codex_shaped, width, utc_today)?;
     let required_days = utc_today
         .signed_duration_since(calendar.start_week)
         .num_days()
@@ -165,6 +216,7 @@ fn render_activity_calendar(
     calendar: &ActivityCalendar,
     width: usize,
     show_calendar: bool,
+    show_overview: bool,
     show_daily_activity: bool,
     theme: Theme,
 ) {
@@ -202,6 +254,9 @@ fn render_activity_calendar(
             rows.push(Line::from(spans));
         }
         blocks.push(rows);
+    }
+    if show_overview {
+        blocks.push(activity_overview_rows(calendar, width, theme));
     }
     if show_daily_activity {
         blocks.push(activity_daily_rows(calendar, width, theme));
@@ -345,7 +400,7 @@ fn period_buckets(
 }
 
 fn amp_table_row(label: &str, values: [String; 3], width: usize, theme: Theme) -> Line<'static> {
-    let minimum_label_width = LABEL_WIDTH.min(width);
+    let minimum_label_width = CODEX_GUTTER_WIDTH.min(width);
     let label_width = width.saturating_sub(21).clamp(minimum_label_width, 24);
     let column_widths = equal_column_widths(width.saturating_sub(label_width), values.len());
     let mut spans = vec![dim(fixed(label, label_width))];
@@ -452,6 +507,70 @@ fn sync_eta(seconds: u64) -> String {
     }
 }
 
+fn activity_overview_rows(
+    calendar: &ActivityCalendar,
+    width: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let mut stats = vec![
+        (
+            "7D",
+            compact_token_count(activity_period_tokens(calendar, 7)),
+        ),
+        (
+            "30D",
+            compact_token_count(activity_period_tokens(calendar, 30)),
+        ),
+    ];
+    if let Some(summary) = calendar.summary {
+        stats.extend(
+            [
+                summary
+                    .lifetime_tokens
+                    .map(|tokens| ("Total", compact_token_count(tokens))),
+                summary
+                    .peak_daily_tokens
+                    .map(|tokens| ("Peak", compact_token_count(tokens))),
+                summary
+                    .current_streak_days
+                    .map(|days| ("Streak", format!("{days}d"))),
+                summary
+                    .longest_streak_days
+                    .map(|days| ("Best", format!("{days}d"))),
+            ]
+            .into_iter()
+            .flatten(),
+        );
+    }
+    let gap = usize::from(width >= stats.len() * 2 - 1);
+    let column_widths =
+        equal_column_widths(width.saturating_sub(gap * (stats.len() - 1)), stats.len());
+    let mut headings = Vec::with_capacity(stats.len());
+    let mut values = Vec::with_capacity(stats.len());
+    for (index, ((heading, value), column_width)) in
+        stats.into_iter().zip(column_widths).enumerate()
+    {
+        if index > 0 {
+            headings.push(Span::raw(" ".repeat(gap)));
+            values.push(Span::raw(" ".repeat(gap)));
+        }
+        headings.push(dim(fixed(heading, column_width)));
+        values.push(span(fixed(&value, column_width), theme.accent, true));
+    }
+    vec![Line::from(headings), Line::from(values)]
+}
+
+fn activity_period_tokens(calendar: &ActivityCalendar, days: u64) -> u64 {
+    let start = calendar
+        .latest_date
+        .checked_sub_days(Days::new(days.saturating_sub(1)))
+        .unwrap_or(calendar.latest_date);
+    calendar
+        .tokens_by_date
+        .range(start..=calendar.latest_date)
+        .fold(0, |total, (_, tokens)| total.saturating_add(*tokens))
+}
+
 fn activity_daily_rows(
     calendar: &ActivityCalendar,
     width: usize,
@@ -528,18 +647,13 @@ fn compact_token_count(tokens: u64) -> String {
 }
 
 fn activity_calendar(
-    usage: &AmpActivityUsage,
+    usage: &CodexActivityUsage,
     width: usize,
     utc_today: NaiveDate,
 ) -> Option<ActivityCalendar> {
-    let tokens_by_date = usage
-        .daily_usage_buckets
-        .iter()
-        .filter_map(|bucket| {
-            NaiveDate::parse_from_str(&bucket.date, "%Y-%m-%d")
-                .ok()
-                .map(|date| (date, bucket.tokens))
-        })
+    let tokens_by_date = daily_token_usage(usage)?
+        .into_iter()
+        .map(|bucket| (bucket.date, bucket.tokens))
         .collect::<BTreeMap<_, _>>();
     let latest_date = *tokens_by_date.keys().next_back()?;
     let current_week = sunday_of_week(utc_today);
@@ -565,7 +679,26 @@ fn activity_calendar(
         latest_date,
         tokens_by_date,
         quartiles: activity_quartiles(&visible_nonzero),
+        summary: usage.summary,
     })
+}
+
+fn daily_token_usage(usage: &CodexActivityUsage) -> Option<Vec<DailyTokenUsage>> {
+    Some(
+        usage
+            .daily_usage_buckets
+            .as_ref()?
+            .iter()
+            .filter_map(|bucket| {
+                NaiveDate::parse_from_str(&bucket.start_date, "%Y-%m-%d")
+                    .ok()
+                    .map(|date| DailyTokenUsage {
+                        date,
+                        tokens: bucket.tokens,
+                    })
+            })
+            .collect(),
+    )
 }
 
 fn activity_week_capacity(width: usize) -> usize {
@@ -654,21 +787,34 @@ fn activity_month_labels(calendar: &ActivityCalendar) -> Line<'static> {
 mod tests {
     use super::*;
     use ratatui::style::Modifier;
+    use serde_json::json;
 
     fn date(value: &str) -> NaiveDate {
         NaiveDate::parse_from_str(value, "%Y-%m-%d").unwrap()
     }
 
-    fn activity(buckets: &[(&str, u64)]) -> AmpActivityUsage {
-        AmpActivityUsage {
-            daily_usage_buckets: buckets
-                .iter()
-                .map(|(date, tokens)| crate::model::AmpDailyUsageBucket {
-                    date: (*date).into(),
-                    tokens: *tokens,
-                    ..crate::model::AmpDailyUsageBucket::default()
-                })
-                .collect(),
+    fn activity(buckets: &[(&str, u64)]) -> CodexActivityUsage {
+        CodexActivityUsage {
+            daily_usage_buckets: Some(
+                buckets
+                    .iter()
+                    .map(|(start_date, tokens)| crate::model::CodexDailyUsageBucket {
+                        start_date: (*start_date).into(),
+                        tokens: *tokens,
+                    })
+                    .collect(),
+            ),
+            summary: None,
+        }
+    }
+
+    fn activity_with_summary(
+        buckets: &[(&str, u64)],
+        summary: CodexActivitySummary,
+    ) -> CodexActivityUsage {
+        CodexActivityUsage {
+            summary: Some(summary),
+            ..activity(buckets)
         }
     }
 
@@ -692,13 +838,22 @@ mod tests {
 
     #[test]
     fn places_activity_in_calendar_rows_and_marks_missing_past_dates() {
-        let usage = activity(&[("2026-07-26", 10), ("2026-08-01", 20)]);
+        let state = ProviderState {
+            result: Some(activity(&[("2026-07-26", 10), ("2026-08-01", 20)])),
+            ..ProviderState::default()
+        };
         let mut lines = Vec::new();
-        let calendar = activity_calendar(&usage, 30, date("2026-08-01")).unwrap();
 
-        render_activity_calendar(&mut lines, &calendar, 30, true, true, Theme::default());
+        render_codex_activity(
+            &mut lines,
+            &state,
+            30,
+            date("2026-08-01"),
+            &CodexActivityDisplayConfig::default(),
+            Theme::default(),
+        );
 
-        assert_eq!(lines.len(), 11);
+        assert_eq!(lines.len(), 14);
         assert_eq!(line_text(&lines[1]).chars().count(), 30);
         assert!(line_text(&lines[1]).starts_with("Sun  ·"));
         assert!(line_text(&lines[1]).ends_with('■'));
@@ -709,10 +864,13 @@ mod tests {
                 .all(|line| line_text(line).ends_with('·'))
         );
         assert!(line_text(&lines[8]).is_empty());
-        assert!(line_text(&lines[9]).contains("26"));
-        assert!(line_text(&lines[9]).contains('1'));
-        assert!(line_text(&lines[10]).contains("10"));
-        assert!(line_text(&lines[10]).contains("20"));
+        assert!(line_text(&lines[9]).contains("7D"));
+        assert!(line_text(&lines[9]).contains("30D"));
+        assert!(line_text(&lines[11]).is_empty());
+        assert!(line_text(&lines[12]).contains("26"));
+        assert!(line_text(&lines[12]).contains('1'));
+        assert!(line_text(&lines[13]).contains("10"));
+        assert!(line_text(&lines[13]).contains("20"));
         assert!(lines[2].spans.iter().any(|span| {
             span.content.as_ref() == "·" && span.style.add_modifier.contains(Modifier::DIM)
         }));
@@ -720,11 +878,20 @@ mod tests {
 
     #[test]
     fn leaves_current_week_future_days_blank() {
-        let usage = activity(&[("2026-07-12", 1), ("2026-08-05", 5)]);
+        let state = ProviderState {
+            result: Some(activity(&[("2026-07-12", 1), ("2026-08-05", 5)])),
+            ..ProviderState::default()
+        };
         let mut lines = Vec::new();
-        let calendar = activity_calendar(&usage, 30, date("2026-08-05")).unwrap();
 
-        render_activity_calendar(&mut lines, &calendar, 30, true, true, Theme::default());
+        render_codex_activity(
+            &mut lines,
+            &state,
+            30,
+            date("2026-08-05"),
+            &CodexActivityDisplayConfig::default(),
+            Theme::default(),
+        );
 
         assert!(line_text(&lines[4]).ends_with('■'));
         assert!(line_text(&lines[5]).ends_with(' '));
@@ -780,6 +947,30 @@ mod tests {
     }
 
     #[test]
+    fn selects_the_latest_bucket_and_summarizes_anchored_calendar_days() {
+        let usage = activity(&[
+            ("2026-08-01", 47_250_000),
+            ("2026-07-02", 99_000_000),
+            ("2026-07-03", 10_000_000),
+            ("2026-07-26", 200_000_000),
+            ("2026-08-01", 100_000_000),
+            ("2026-07-31", 47_250_000),
+        ]);
+        let calendar = activity_calendar(&usage, 100, date("2026-08-02")).unwrap();
+
+        assert_eq!(calendar.latest_date, date("2026-08-01"));
+        assert_eq!(activity_period_tokens(&calendar, 1), 100_000_000);
+        assert_eq!(activity_period_tokens(&calendar, 7), 347_250_000);
+        assert_eq!(activity_period_tokens(&calendar, 30), 357_250_000);
+        let summary = activity_overview_rows(&calendar, 51, Theme::default());
+        assert_eq!(summary.len(), 2);
+        assert_eq!(summary[0].spans[0].content.trim(), "7D");
+        assert_eq!(summary[0].spans[2].content.trim(), "30D");
+        assert_eq!(summary[1].spans[0].content.trim(), "347M");
+        assert_eq!(summary[1].spans[2].content.trim(), "357M");
+    }
+
+    #[test]
     fn compacts_large_token_counts_and_truncates_summary_by_width() {
         assert_eq!(compact_token_count(999), "999");
         assert_eq!(compact_token_count(1_250), "1.2K");
@@ -787,6 +978,70 @@ mod tests {
         assert_eq!(compact_token_count(999_500), "1M");
         assert_eq!(compact_token_count(999_999_999), "1B");
         assert_eq!(compact_token_count(2_100_000_000), "2.1B");
+    }
+
+    #[test]
+    fn includes_account_metrics_in_the_overview_columns() {
+        let usage = activity_with_summary(
+            &[("2026-08-01", 2)],
+            CodexActivitySummary {
+                lifetime_tokens: Some(12_300_000_000),
+                peak_daily_tokens: Some(420_000_000),
+                longest_running_turn_sec: Some(9_000),
+                current_streak_days: Some(5),
+                longest_streak_days: Some(23),
+            },
+        );
+        let calendar = activity_calendar(&usage, 100, date("2026-08-02")).unwrap();
+
+        let overview = activity_overview_rows(&calendar, 51, Theme::default());
+        assert_eq!(overview.len(), 2);
+        assert_eq!(overview[0].spans.len(), 11);
+        assert_eq!(overview[0].spans[4].content.trim(), "Total");
+        assert_eq!(overview[0].spans[6].content.trim(), "Peak");
+        assert_eq!(overview[0].spans[8].content.trim(), "Streak");
+        assert_eq!(overview[0].spans[10].content.trim(), "Best");
+        assert_eq!(overview[1].spans[4].content.trim(), "12.3B");
+        assert_eq!(overview[1].spans[6].content.trim(), "420M");
+        assert_eq!(overview[1].spans[8].content.trim(), "5d");
+        assert_eq!(overview[1].spans[10].content.trim(), "23d");
+        assert!(overview[0].spans[0].content.starts_with("7D"));
+        assert!(overview[1].spans[0].content.starts_with('2'));
+        assert_eq!(
+            calendar.summary.unwrap().longest_running_turn_sec,
+            Some(9_000)
+        );
+    }
+
+    #[test]
+    fn reads_bucket_only_and_enriched_activity_caches() {
+        let cached: CodexActivityUsage = serde_json::from_value(json!({
+            "dailyUsageBuckets": [{"startDate": "2026-08-01", "tokens": 2}]
+        }))
+        .unwrap();
+        assert!(cached.summary.is_none());
+
+        let enriched: CodexActivityUsage = serde_json::from_value(json!({
+            "dailyUsageBuckets": [],
+            "summary": {
+                "lifetimeTokens": 12,
+                "peakDailyTokens": 8,
+                "longestRunningTurnSec": 90,
+                "currentStreakDays": 3,
+                "longestStreakDays": 7
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            enriched.summary,
+            Some(CodexActivitySummary {
+                lifetime_tokens: Some(12),
+                peak_daily_tokens: Some(8),
+                longest_running_turn_sec: Some(90),
+                current_streak_days: Some(3),
+                longest_streak_days: Some(7),
+            })
+        );
     }
 
     #[test]
@@ -820,7 +1075,11 @@ mod tests {
     }
 
     #[test]
-    fn skips_malformed_dates() {
+    fn treats_null_buckets_as_unavailable_and_skips_malformed_dates() {
+        let null_usage: CodexActivityUsage =
+            serde_json::from_value(json!({"dailyUsageBuckets": null})).unwrap();
+        assert!(activity_calendar(&null_usage, 40, date("2026-08-02")).is_none());
+
         let usage = activity(&[("not-a-date", 99), ("2026-08-02", 2)]);
         let calendar = activity_calendar(&usage, 40, date("2026-08-02")).unwrap();
         assert_eq!(calendar.latest_date, date("2026-08-02"));
@@ -845,38 +1104,6 @@ mod tests {
                 .all(|span| span.style.add_modifier.contains(Modifier::DIM))
         );
         assert!(activity_daily_rows(&empty_calendar, 6, Theme::default()).is_empty());
-    }
-
-    #[test]
-    fn wraps_the_activity_refresh_error_below_its_status() {
-        let state = ProviderState {
-            result: Some(activity(&[("2026-08-02", 1)])),
-            error: Some("Error: temporary Amp usage service failure".into()),
-            ..ProviderState::default()
-        };
-        let mut lines = Vec::new();
-
-        render_amp_activity(
-            &mut lines,
-            &state,
-            40,
-            date("2026-08-02"),
-            &AmpActivityDisplayConfig {
-                calendar: false,
-                daily_activity: false,
-                usage_summary: false,
-                models: false,
-                sources: false,
-                ..AmpActivityDisplayConfig::default()
-            },
-            Theme::default(),
-        );
-        let text = lines.iter().map(line_text).collect::<Vec<_>>();
-
-        assert!(text[0].contains("Cached data; refresh failed:"));
-        assert!(text[1].contains("Error: temporary Amp usage"));
-        assert!(text[2].contains("service failure"));
-        assert!(text[..3].iter().all(|line| line.chars().count() <= 40));
     }
 
     #[test]
@@ -1095,7 +1322,13 @@ mod tests {
         assert_eq!(amp_activity_history_days(40, today), 120);
         assert_eq!(amp_activity_history_days(58, today), 183);
 
-        let usage = activity(&[("2026-08-02", 1)]);
+        let usage = CodexActivityUsage {
+            daily_usage_buckets: Some(vec![CodexDailyUsageBucket {
+                start_date: "2026-08-02".into(),
+                tokens: 1,
+            }]),
+            summary: None,
+        };
         let calendar = activity_calendar(&usage, 40, today).unwrap();
         assert_eq!(
             today.signed_duration_since(calendar.start_week).num_days() as usize + 1,

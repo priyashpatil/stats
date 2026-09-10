@@ -15,7 +15,7 @@ Thanks for helping improve Stats. This guide covers the technical setup; the [RE
 - Rust 1.85 or newer with Cargo, rustfmt, and Clippy
 - Swift 6.1 or newer for the native app
 - macOS for building and running the native app
-- Amp installed and signed in for exercising the usage integration
+- Amp and Codex installed and signed in for exercising their usage integrations
 
 ## Set up the repository
 
@@ -45,7 +45,7 @@ Use the repository's canonical development workflow rather than running separate
 This command:
 
 - builds the Rust and Swift release targets
-- installs `stats` in `~/.cargo/bin`
+- installs `stats`, `codex-usage`, and `codex-usage-status` in `~/.cargo/bin`
 - builds and ad-hoc signs `~/Applications/Stats.app`
 - installs its user LaunchAgent and starts the app
 - verifies the app signature, service state, and running executable

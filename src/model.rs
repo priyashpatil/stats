@@ -1,12 +1,16 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use crate::config::{ColorTheme, SectionDisplayConfig, SectionsConfig};
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, NaiveDate};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use crate::config::{ColorTheme, SectionDisplayConfig, SectionsConfig};
 
 pub(crate) struct Args {
     pub(crate) action: Action,
+    pub(crate) mode: Mode,
+    pub(crate) interval: u64,
     pub(crate) once: bool,
     pub(crate) amp_interval: u64,
     pub(crate) storage_interval: u64,
@@ -30,12 +34,19 @@ pub(crate) struct Clock {
     pub(crate) timezone: String,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum Mode {
+    Stats,
+    CodexUsageStatus,
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ProviderState<T> {
     pub(crate) result: Option<T>,
     pub(crate) error: Option<String>,
     pub(crate) retry_after: Option<Duration>,
     pub(crate) updated_at: Option<DateTime<Local>>,
+    pub(crate) ready: bool,
     pub(crate) stale: bool,
 }
 
@@ -89,6 +100,36 @@ pub(crate) struct AmpRequestRecord {
     pub(crate) kind: String,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub(crate) struct CodexActivityUsage {
+    pub(crate) daily_usage_buckets: Option<Vec<CodexDailyUsageBucket>>,
+    pub(crate) summary: Option<CodexActivitySummary>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub(crate) struct CodexDailyUsageBucket {
+    pub(crate) start_date: String,
+    pub(crate) tokens: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub(crate) struct CodexActivitySummary {
+    pub(crate) lifetime_tokens: Option<u64>,
+    pub(crate) peak_daily_tokens: Option<u64>,
+    pub(crate) longest_running_turn_sec: Option<u64>,
+    pub(crate) current_streak_days: Option<u64>,
+    pub(crate) longest_streak_days: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) struct DailyTokenUsage {
+    pub(crate) date: NaiveDate,
+    pub(crate) tokens: u64,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct SystemMetrics {
     pub(crate) cpu_percent: Option<f64>,
@@ -131,5 +172,7 @@ pub(crate) struct AppState {
     pub(crate) amp: ProviderState<AmpUsage>,
     pub(crate) amp_activity: ProviderState<AmpActivityUsage>,
     pub(crate) amp_activity_history_days: usize,
+    pub(crate) codex: ProviderState<Value>,
+    pub(crate) codex_activity: ProviderState<CodexActivityUsage>,
     pub(crate) system: SystemMetrics,
 }

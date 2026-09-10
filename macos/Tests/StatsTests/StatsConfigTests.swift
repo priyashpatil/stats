@@ -78,6 +78,35 @@ struct StatsConfigTests {
     #expect(store.config.desktop.colorTheme == .aurora)
   }
 
+  @Test("Amp-only config defaults restored Codex settings")
+  func ampOnlyConfigDefaultsRestoredCodexSettings() throws {
+    let fixture = try fixture()
+    defer { fixture.cleanup() }
+    let config = validConfig()
+      .replacingOccurrences(of: "codex_activity = true\n", with: "")
+      .replacingOccurrences(of: "codex_quota = true\n", with: "")
+      .replacingOccurrences(
+        of: """
+          [section_display.codex_activity]
+          heading = true
+          calendar = true
+          overview = true
+          daily_activity = true
+
+          """,
+        with: ""
+      )
+      .replacingOccurrences(of: "codex_seconds = 60\n", with: "")
+    try writeConfig(config, to: fixture.url)
+
+    let store = try StatsConfigStore(url: fixture.url)
+
+    #expect(store.config.sections.codexActivity)
+    #expect(store.config.sectionDisplay.ai.codexQuota)
+    #expect(store.config.sectionDisplay.codexActivity == CodexActivityDisplayConfig())
+    #expect(store.config.refresh.codexSeconds == 60)
+  }
+
   @Test("Unknown color theme is rejected")
   func unknownColorThemeIsRejected() throws {
     let fixture = try fixture()
@@ -252,6 +281,7 @@ struct StatsConfigTests {
     system = true
     ai = true
     amp_activity = true
+    codex_activity = true
 
     [section_display.clocks]
     heading = true
@@ -273,6 +303,7 @@ struct StatsConfigTests {
     amp_plan = true
     amp_orbs = true
     amp_credits = true
+    codex_quota = true
 
     [section_display.amp_activity]
     heading = true
@@ -283,7 +314,14 @@ struct StatsConfigTests {
     sources = true
     sync_alerts = true
 
+    [section_display.codex_activity]
+    heading = true
+    calendar = true
+    overview = true
+    daily_activity = true
+
     [refresh]
+    codex_seconds = 60
     amp_seconds = 300
     storage_seconds = 300
 
