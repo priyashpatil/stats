@@ -8,9 +8,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use chrono::{DateTime, Local, TimeZone};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 
-use crate::model::{AmpActivityUsage, AmpRequestLedger, AmpUsage, AppState, CodexActivityUsage};
+use crate::model::{AmpActivityUsage, AmpRequestLedger, AmpUsage, AppState};
 
 #[derive(Debug, Clone, Deserialize)]
 struct CacheEnvelope<T> {
@@ -124,18 +124,6 @@ pub(crate) fn prime_usage_caches(state: &Arc<Mutex<AppState>>) {
         state.amp_activity.updated_at = Some(updated_at);
         state.amp_activity.stale = true;
     }
-    if let Some((result, updated_at)) = read_usage_cache::<Value>("codex", None) {
-        let mut state = state.lock().unwrap();
-        state.codex.result = Some(result);
-        state.codex.updated_at = Some(updated_at);
-    }
-    if let Some((result, updated_at)) =
-        read_usage_cache::<CodexActivityUsage>("codex-activity", None)
-    {
-        let mut state = state.lock().unwrap();
-        state.codex_activity.result = Some(result);
-        state.codex_activity.updated_at = Some(updated_at);
-    }
 }
 
 pub(crate) fn load_cached_amp(state: &Arc<Mutex<AppState>>, error: String) {
@@ -149,35 +137,6 @@ pub(crate) fn load_cached_amp(state: &Arc<Mutex<AppState>>, error: String) {
         state.amp.stale = true;
     } else {
         state.amp.error = Some(error);
-    }
-}
-
-pub(crate) fn load_cached_codex(state: &Arc<Mutex<AppState>>, error: String) {
-    let cached = read_usage_cache::<Value>("codex", Some(env_u64("STATS_USAGE_CACHE_TTL", 600)))
-        .or_else(|| read_usage_cache::<Value>("codex", None));
-    let mut state = state.lock().unwrap();
-    if let Some((result, updated_at)) = cached {
-        state.codex.result = Some(result);
-        state.codex.updated_at = Some(updated_at);
-        state.codex.error = None;
-    } else {
-        state.codex.error = Some(error);
-    }
-}
-
-pub(crate) fn load_cached_codex_activity(state: &Arc<Mutex<AppState>>, error: String) {
-    let cached = read_usage_cache::<CodexActivityUsage>(
-        "codex-activity",
-        Some(env_u64("STATS_USAGE_CACHE_TTL", 600)),
-    )
-    .or_else(|| read_usage_cache::<CodexActivityUsage>("codex-activity", None));
-    let mut state = state.lock().unwrap();
-    if let Some((result, updated_at)) = cached {
-        state.codex_activity.result = Some(result);
-        state.codex_activity.updated_at = Some(updated_at);
-        state.codex_activity.error = None;
-    } else {
-        state.codex_activity.error = Some(error);
     }
 }
 

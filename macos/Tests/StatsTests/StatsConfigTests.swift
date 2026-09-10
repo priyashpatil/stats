@@ -252,7 +252,6 @@ struct StatsConfigTests {
     system = true
     ai = true
     amp_activity = true
-    codex_activity = true
 
     [section_display.clocks]
     heading = true
@@ -274,7 +273,6 @@ struct StatsConfigTests {
     amp_plan = true
     amp_orbs = true
     amp_credits = true
-    codex_quota = true
 
     [section_display.amp_activity]
     heading = true
@@ -285,14 +283,7 @@ struct StatsConfigTests {
     sources = true
     sync_alerts = true
 
-    [section_display.codex_activity]
-    heading = true
-    calendar = true
-    overview = true
-    daily_activity = true
-
     [refresh]
-    codex_seconds = 60
     amp_seconds = 300
     storage_seconds = 300
 

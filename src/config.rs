@@ -26,7 +26,6 @@ pub(crate) struct SectionsConfig {
     pub(crate) system: bool,
     pub(crate) ai: bool,
     pub(crate) amp_activity: bool,
-    pub(crate) codex_activity: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize)]
@@ -35,7 +34,6 @@ pub(crate) struct SectionDisplayConfig {
     pub(crate) system: SystemDisplayConfig,
     pub(crate) ai: AiDisplayConfig,
     pub(crate) amp_activity: AmpActivityDisplayConfig,
-    pub(crate) codex_activity: CodexActivityDisplayConfig,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -63,7 +61,6 @@ pub(crate) struct AiDisplayConfig {
     pub(crate) amp_plan: bool,
     pub(crate) amp_orbs: bool,
     pub(crate) amp_credits: bool,
-    pub(crate) codex_quota: bool,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -77,17 +74,8 @@ pub(crate) struct AmpActivityDisplayConfig {
     pub(crate) sync_alerts: bool,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
-pub(crate) struct CodexActivityDisplayConfig {
-    pub(crate) heading: bool,
-    pub(crate) calendar: bool,
-    pub(crate) overview: bool,
-    pub(crate) daily_activity: bool,
-}
-
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct RefreshConfig {
-    pub(crate) codex_seconds: u64,
     pub(crate) amp_seconds: u64,
     pub(crate) storage_seconds: u64,
 }
@@ -131,7 +119,6 @@ impl Default for SectionsConfig {
             system: true,
             ai: true,
             amp_activity: true,
-            codex_activity: true,
         }
     }
 }
@@ -165,8 +152,7 @@ all_true_default!(AiDisplayConfig {
     heading,
     amp_plan,
     amp_orbs,
-    amp_credits,
-    codex_quota
+    amp_credits
 });
 all_true_default!(AmpActivityDisplayConfig {
     heading,
@@ -177,13 +163,6 @@ all_true_default!(AmpActivityDisplayConfig {
     sources,
     sync_alerts
 });
-all_true_default!(CodexActivityDisplayConfig {
-    heading,
-    calendar,
-    overview,
-    daily_activity
-});
-
 impl SectionDisplayConfig {
     pub(crate) fn system_needed(&self, sections: &SectionsConfig) -> bool {
         sections.system
@@ -198,10 +177,6 @@ impl SectionDisplayConfig {
         sections.ai && (self.ai.amp_plan || self.ai.amp_orbs || self.ai.amp_credits)
     }
 
-    pub(crate) fn codex_ai_needed(&self, sections: &SectionsConfig) -> bool {
-        sections.ai && self.ai.codex_quota
-    }
-
     pub(crate) fn amp_activity_needed(&self, sections: &SectionsConfig) -> bool {
         sections.amp_activity
             && (self.amp_activity.calendar
@@ -211,19 +186,11 @@ impl SectionDisplayConfig {
                 || self.amp_activity.sources
                 || self.amp_activity.sync_alerts)
     }
-
-    pub(crate) fn codex_activity_needed(&self, sections: &SectionsConfig) -> bool {
-        sections.codex_activity
-            && (self.codex_activity.calendar
-                || self.codex_activity.overview
-                || self.codex_activity.daily_activity)
-    }
 }
 
 impl Default for RefreshConfig {
     fn default() -> Self {
         Self {
-            codex_seconds: 60,
             amp_seconds: 300,
             storage_seconds: 300,
         }
@@ -293,11 +260,6 @@ fn validate(config: &Config) -> Result<(), String> {
             config.section_display.amp_activity.any(),
             "amp_activity",
         ),
-        (
-            config.sections.codex_activity,
-            config.section_display.codex_activity.any(),
-            "codex_activity",
-        ),
     ];
     for (enabled, any, section) in requirements {
         if enabled && !any {
@@ -305,9 +267,6 @@ fn validate(config: &Config) -> Result<(), String> {
                 "sections.{section} requires at least one section_display.{section} option"
             ));
         }
-    }
-    if config.refresh.codex_seconds < 5 {
-        return Err("refresh.codex_seconds must be at least 5".into());
     }
     if config.refresh.amp_seconds < 60 {
         return Err("refresh.amp_seconds must be at least 60".into());
@@ -348,8 +307,7 @@ any_enabled!(AiDisplayConfig {
     heading,
     amp_plan,
     amp_orbs,
-    amp_credits,
-    codex_quota
+    amp_credits
 });
 any_enabled!(AmpActivityDisplayConfig {
     heading,
@@ -360,13 +318,6 @@ any_enabled!(AmpActivityDisplayConfig {
     sources,
     sync_alerts
 });
-any_enabled!(CodexActivityDisplayConfig {
-    heading,
-    calendar,
-    overview,
-    daily_activity
-});
-
 pub(crate) fn validate_clocks(clocks: &[Clock]) -> Result<(), String> {
     if clocks.len() != 4 {
         return Err("clocks must contain exactly 4 entries".into());
@@ -525,7 +476,6 @@ mod tests {
                 amp_plan: false,
                 amp_orbs: false,
                 amp_credits: false,
-                codex_quota: false,
             },
             amp_activity: AmpActivityDisplayConfig {
                 heading: true,
@@ -536,20 +486,12 @@ mod tests {
                 sources: false,
                 sync_alerts: false,
             },
-            codex_activity: CodexActivityDisplayConfig {
-                heading: true,
-                calendar: false,
-                overview: false,
-                daily_activity: false,
-            },
             ..SectionDisplayConfig::default()
         };
 
         assert!(!display.system_needed(&sections));
         assert!(!display.amp_ai_needed(&sections));
-        assert!(!display.codex_ai_needed(&sections));
         assert!(!display.amp_activity_needed(&sections));
-        assert!(!display.codex_activity_needed(&sections));
     }
 
     #[test]
@@ -562,7 +504,6 @@ mod tests {
                 .replace("clocks = true", "clocks = false")
                 .replace("ai = true", "ai = false")
                 .replace("amp_activity = true", "amp_activity = false")
-                .replace("codex_seconds = 60", "codex_seconds = 10")
                 .replace("amp_seconds = 300", "amp_seconds = 120")
                 .replace("storage_seconds = 300", "storage_seconds = 180")
                 .replace("font_size = 15", "font_size = 18")
@@ -574,8 +515,6 @@ mod tests {
         assert!(!config.sections.clocks);
         assert!(!config.sections.ai);
         assert!(!config.sections.amp_activity);
-        assert!(config.sections.codex_activity);
-        assert_eq!(config.refresh.codex_seconds, 10);
         assert_eq!(config.desktop.font_size, 18);
         assert!(!config.desktop.show_scrollbar);
         assert_eq!(config.desktop.color_theme, ColorTheme::Sunset);
@@ -650,7 +589,6 @@ clocks = true
 system = true
 ai = true
 amp_activity = true
-codex_activity = true
 
 [section_display.clocks]
 heading = true
@@ -672,7 +610,6 @@ heading = true
 amp_plan = true
 amp_orbs = true
 amp_credits = true
-codex_quota = true
 
 [section_display.amp_activity]
 heading = true
@@ -683,14 +620,7 @@ models = true
 sources = true
 sync_alerts = true
 
-[section_display.codex_activity]
-heading = true
-calendar = true
-overview = true
-daily_activity = true
-
 [refresh]
-codex_seconds = 60
 amp_seconds = 300
 storage_seconds = 300
 

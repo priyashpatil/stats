@@ -3,14 +3,12 @@ use std::fs::{self};
 use std::path::PathBuf;
 
 use crate::config::{self, Config};
-use crate::model::{Action, Args, Clock, Mode};
+use crate::model::{Action, Args, Clock};
 
 pub(crate) fn parse_args() -> Result<Args, String> {
     let mut action = Action::Run;
-    let mut mode = mode_from_argv0();
     let mut once = false;
     let mut config_path = config::default_path()?;
-    let mut interval = None;
     let mut amp_interval = None;
     let mut storage_interval = None;
 
@@ -29,9 +27,7 @@ pub(crate) fn parse_args() -> Result<Args, String> {
                         .ok_or_else(|| "--config requires a path".to_string())?,
                 );
             }
-            "--codex-usage-status" => mode = Mode::CodexUsageStatus,
             "--once" => once = true,
-            "-i" | "--interval" => interval = Some(parse_next_u64(&mut iter, &arg)?),
             "--amp-interval" => amp_interval = Some(parse_next_u64(&mut iter, &arg)?),
             "--storage-interval" => storage_interval = Some(parse_next_u64(&mut iter, &arg)?),
             "-h" | "--help" => {
@@ -45,8 +41,6 @@ pub(crate) fn parse_args() -> Result<Args, String> {
     if action == Action::ConfigPath {
         return Ok(Args {
             action,
-            mode,
-            interval: 60,
             once,
             amp_interval: 300,
             storage_interval: 300,
@@ -59,37 +53,22 @@ pub(crate) fn parse_args() -> Result<Args, String> {
         });
     }
 
-    let config = if mode == Mode::CodexUsageStatus {
-        Config::default()
-    } else {
-        config::load(&config_path)?
-    };
-    let interval = interval
-        .unwrap_or_else(|| env_u64("CODEX_USAGE_WATCH_INTERVAL", config.refresh.codex_seconds));
+    let config = config::load(&config_path)?;
     let amp_interval = amp_interval
         .unwrap_or_else(|| env_u64("AMP_USAGE_WATCH_INTERVAL", config.refresh.amp_seconds));
-    let storage_interval = storage_interval.unwrap_or_else(|| {
-        env_u64(
-            "CODEX_USAGE_STORAGE_INTERVAL",
-            config.refresh.storage_seconds,
-        )
-    });
+    let storage_interval = storage_interval
+        .unwrap_or_else(|| env_u64("STATS_STORAGE_INTERVAL", config.refresh.storage_seconds));
     let clocks = configured_clocks(config.clocks);
     let sections = config.sections;
     let section_display = config.section_display;
     let color_theme = config.desktop.color_theme;
     let show_scrollbar = config.desktop.show_scrollbar;
 
-    if interval < 5 {
-        return Err("interval must be an integer >= 5 seconds".into());
-    }
     if amp_interval < 60 {
         return Err("amp interval must be an integer >= 60 seconds".into());
     }
     Ok(Args {
         action,
-        mode,
-        interval,
         once,
         amp_interval,
         storage_interval: storage_interval.max(60),
@@ -110,21 +89,6 @@ fn configured_clocks(default: Vec<Clock>) -> Vec<Clock> {
         .unwrap_or(default)
 }
 
-fn mode_from_argv0() -> Mode {
-    let command = env::args()
-        .next()
-        .and_then(|arg| {
-            std::path::Path::new(&arg)
-                .file_name()
-                .map(|name| name.to_string_lossy().to_string())
-        })
-        .unwrap_or_default();
-    match command.as_str() {
-        "codex-usage-status" => Mode::CodexUsageStatus,
-        _ => Mode::Stats,
-    }
-}
-
 pub(crate) fn env_u64(name: &str, default: u64) -> u64 {
     env::var(name)
         .ok()
@@ -143,15 +107,13 @@ where
 }
 
 fn print_help() {
-    println!("Amp, Codex, and system stats");
+    println!("Amp and system stats");
     println!();
     println!("Commands:");
     println!("      config path");
     println!();
     println!("Options:");
     println!("      --config <path>");
-    println!("      --codex-usage-status");
-    println!("  -i, --interval <seconds>");
     println!("      --once");
     println!("      --amp-interval <seconds>");
     println!("      --storage-interval <seconds>");
