@@ -7,7 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use chrono::{Days, Local, NaiveDate, Utc};
 use regex::Regex;
 
-use crate::cache::{load_amp_request_ledger, load_cached_amp, write_usage_cache};
+use crate::cache::{cli_working_dir, load_amp_request_ledger, load_cached_amp, write_usage_cache};
 use crate::model::{
     AmpActivityUsage, AmpDailyUsageBucket, AmpRequestLedger, AmpRequestRecord, AmpTokenCategory,
     AmpUsage, AppState,
@@ -207,8 +207,10 @@ fn run_amp_usage(args: &[&str], kind: AmpRequestKind) -> Result<AmpFetch<String>
         return Ok(AmpFetch::Deferred(delay));
     }
     let _usage_guard = AMP_USAGE_LOCK.lock().unwrap();
+    let working_dir = cli_working_dir("amp")?;
     let output = Command::new("amp")
         .args(args)
+        .current_dir(working_dir)
         .output()
         .map_err(|error| error.to_string())?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -397,36 +399,40 @@ fn extract_amp_usage(output: &str) -> Option<AmpUsage> {
         r"(?im)^(?:Amp\s+([^:\r\n]+?)\s+(?:Subscription|Tier)|(?:Subscription|Tier)\s+([^:\r\n]+)):\s*([^\r\n]+)",
     )
     .ok()?
-    .captures(&cleaned)?;
-    let details = subscription.get(3)?.as_str();
-    let legacy_usage = Regex::new(
-        r"(?i)^([0-9]+(?:\.[0-9]+)?)%\s+other usage(?:\s+and\s+([0-9]+(?:\.[0-9]+)?)%\s+orb usage)?\s+remaining(?:\s+-\s+(.+))?$",
-    )
-    .ok()?;
-    let current_usage = Regex::new(
-        r"(?i)^agent usage\b.*?\bremaining\s*\(([0-9]+(?:\.[0-9]+)?)%\)(?:,\s*orb usage\b.*?\bremaining\s*\(([0-9]+(?:\.[0-9]+)?)%\))?(?:\s+-\s+(.+))?$",
-    )
-    .ok()?;
-    let (other_percent_remaining, orb_percent_remaining, reset) =
-        if let Some(usage) = legacy_usage.captures(details) {
-            (
-                usage.get(1).and_then(|value| value.as_str().parse().ok()),
-                usage.get(2).and_then(|value| value.as_str().parse().ok()),
-                usage.get(3).map(|value| value.as_str().trim().to_string()),
+    .captures(&cleaned);
+    let (other_percent_remaining, orb_percent_remaining, reset) = subscription
+        .as_ref()
+        .and_then(|subscription| subscription.get(3))
+        .and_then(|details| {
+            let details = details.as_str();
+            let legacy_usage = Regex::new(
+                r"(?i)^([0-9]+(?:\.[0-9]+)?)%\s+other usage(?:\s+and\s+([0-9]+(?:\.[0-9]+)?)%\s+orb usage)?\s+remaining(?:\s+-\s+(.+))?$",
             )
-        } else {
+            .ok()?;
+            let current_usage = Regex::new(
+                r"(?i)^agent usage\b.*?\bremaining\s*\(([0-9]+(?:\.[0-9]+)?)%\)(?:,\s*orb usage\b.*?\bremaining\s*\(([0-9]+(?:\.[0-9]+)?)%\))?(?:\s+-\s+(.+))?$",
+            )
+            .ok()?;
+            if let Some(usage) = legacy_usage.captures(details) {
+                return Some((
+                    usage.get(1).and_then(|value| value.as_str().parse().ok()),
+                    usage.get(2).and_then(|value| value.as_str().parse().ok()),
+                    usage.get(3).map(|value| value.as_str().trim().to_string()),
+                ));
+            }
             let usage = current_usage.captures(details)?;
             let reset = Regex::new(r"(?i)(resets upon renewal[^,\r\n]*)")
                 .ok()?
                 .captures(details)
                 .and_then(|captures| captures.get(1))
                 .map(|value| value.as_str().trim().to_string());
-            (
+            Some((
                 usage.get(1).and_then(|value| value.as_str().parse().ok()),
                 usage.get(2).and_then(|value| value.as_str().parse().ok()),
                 reset,
-            )
-        };
+            ))
+        })
+        .unwrap_or_default();
     let orb_runtime = Regex::new(r"(?im)^Total Orb runtime:\s*([^\r\n(]+)")
         .ok()?
         .captures(&cleaned)
@@ -438,10 +444,13 @@ fn extract_amp_usage(output: &str) -> Option<AmpUsage> {
             .captures(&cleaned)
             .and_then(|captures| captures.get(1))
             .map(|value| value.as_str().trim().to_string());
+    if subscription.is_none() && individual_credits_remaining.is_none() {
+        return None;
+    }
     Some(AmpUsage {
         plan: subscription
-            .get(1)
-            .or_else(|| subscription.get(2))
+            .as_ref()
+            .and_then(|subscription| subscription.get(1).or_else(|| subscription.get(2)))
             .map(|value| value.as_str().trim().to_string()),
         other_percent_remaining,
         orb_percent_remaining,
@@ -644,6 +653,21 @@ mod tests {
         assert_eq!(usage.orb_percent_remaining, None);
         assert_eq!(usage.individual_credits_remaining.as_deref(), Some("$0.50"));
         assert_eq!(usage.reset, None);
+    }
+
+    #[test]
+    fn extracts_credits_when_amp_omits_subscription_limits() {
+        let usage = extract_amp_usage(
+            "# Usage\n\nSigned in as user@example.com\n**Individual credits:** $12.34 remaining (set up auto-reload to avoid running out) - https://ampcode.com/settings\n\nRange: 2026-09-21T10:00:09.880Z to 2026-09-28T10:00:09.880Z\nTotal Orb runtime: 0.000s (0 ms)\n",
+        )
+        .expect("usage");
+
+        assert_eq!(usage.plan, None);
+        assert_eq!(usage.other_percent_remaining, None);
+        assert_eq!(
+            usage.individual_credits_remaining.as_deref(),
+            Some("$12.34")
+        );
     }
 
     #[test]

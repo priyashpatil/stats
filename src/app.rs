@@ -10,6 +10,7 @@ use crate::cache::prime_usage_caches;
 use crate::cli::{command_exists, parse_args};
 use crate::model::{Action, AppState, Args, Mode};
 use crate::providers::amp::{spawn_refresh_amp, spawn_refresh_amp_activity};
+use crate::providers::claude::spawn_refresh_claude;
 use crate::providers::codex::{
     pick_port, run_codex_usage_status, shutdown_server, spawn_codex_client, start_codex_server,
     wait_ready,
@@ -62,11 +63,15 @@ fn run() -> Result<AppOutcome, String> {
                 || args.section_display.amp_activity_needed(&args.sections);
             let codex_needed = args.section_display.codex_ai_needed(&args.sections)
                 || args.section_display.codex_activity_needed(&args.sections);
+            let claude_needed = args.section_display.claude_ai_needed(&args.sections);
             if amp_needed && !command_exists("amp") {
                 return Err("amp not found in PATH".into());
             }
             if codex_needed && !command_exists("codex") {
                 return Err("codex not found in PATH".into());
+            }
+            if claude_needed && !command_exists("claude") {
+                return Err("claude not found in PATH".into());
             }
             run_stats(args)
         }
@@ -83,6 +88,7 @@ fn run_stats(args: Args) -> Result<AppOutcome, String> {
     let system_needed = args.section_display.system_needed(&args.sections);
     let amp_ai_needed = args.section_display.amp_ai_needed(&args.sections);
     let codex_ai_needed = args.section_display.codex_ai_needed(&args.sections);
+    let claude_ai_needed = args.section_display.claude_ai_needed(&args.sections);
     let amp_activity_needed = args.section_display.amp_activity_needed(&args.sections);
     let codex_activity_needed = args.section_display.codex_activity_needed(&args.sections);
     let codex_enabled = codex_ai_needed || codex_activity_needed;
@@ -106,6 +112,9 @@ fn run_stats(args: Args) -> Result<AppOutcome, String> {
         }
         if amp_activity_needed {
             spawn_refresh_amp_activity(&state, &stop, args.amp_interval);
+        }
+        if claude_ai_needed {
+            spawn_refresh_claude(&state, &stop, args.claude_interval);
         }
         if let Some(port) = port {
             spawn_codex_client(

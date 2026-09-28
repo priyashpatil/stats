@@ -12,7 +12,9 @@ use rand::Rng;
 use serde_json::{Value, json};
 use tungstenite::{Message, client};
 
-use crate::cache::{load_cached_codex, load_cached_codex_activity, write_usage_cache};
+use crate::cache::{
+    cli_working_dir, load_cached_codex, load_cached_codex_activity, write_usage_cache,
+};
 use crate::model::{AppState, CodexActivityUsage};
 
 pub(crate) fn pick_port() -> Result<u16, String> {
@@ -28,8 +30,10 @@ pub(crate) fn pick_port() -> Result<u16, String> {
 }
 
 pub(crate) fn start_codex_server(port: u16) -> Result<Child, String> {
+    let working_dir = cli_working_dir("codex")?;
     Command::new("codex")
         .args(["app-server", "--listen", &format!("ws://127.0.0.1:{port}")])
+        .current_dir(working_dir)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
