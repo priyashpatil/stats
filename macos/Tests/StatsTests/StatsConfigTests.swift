@@ -107,6 +107,21 @@ struct StatsConfigTests {
     #expect(store.config.refresh.codexSeconds == 60)
   }
 
+  @Test("Existing config leaves Claude disabled")
+  func existingConfigLeavesClaudeDisabled() throws {
+    let fixture = try fixture()
+    defer { fixture.cleanup() }
+    let config = validConfig()
+      .replacingOccurrences(of: "claude_quota = true\n", with: "")
+      .replacingOccurrences(of: "claude_seconds = 300\n", with: "")
+    try writeConfig(config, to: fixture.url)
+
+    let store = try StatsConfigStore(url: fixture.url)
+
+    #expect(store.config.sectionDisplay.ai.claudeQuota == false)
+    #expect(store.config.refresh.claudeSeconds == 300)
+  }
+
   @Test("Unknown color theme is rejected")
   func unknownColorThemeIsRejected() throws {
     let fixture = try fixture()
@@ -304,6 +319,7 @@ struct StatsConfigTests {
     amp_orbs = true
     amp_credits = true
     codex_quota = true
+    claude_quota = true
 
     [section_display.amp_activity]
     heading = true
@@ -323,6 +339,7 @@ struct StatsConfigTests {
     [refresh]
     codex_seconds = 60
     amp_seconds = 300
+    claude_seconds = 300
     storage_seconds = 300
 
     [desktop]
