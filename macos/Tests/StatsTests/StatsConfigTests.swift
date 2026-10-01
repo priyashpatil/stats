@@ -1,4 +1,5 @@
 import Foundation
+import TOML
 import Testing
 
 @testable import Stats
@@ -120,6 +121,82 @@ struct StatsConfigTests {
 
     #expect(store.config.sectionDisplay.ai.claudeQuota == false)
     #expect(store.config.refresh.claudeSeconds == 300)
+  }
+
+  @Test("Grok defaults round trip through TOML")
+  func grokDefaultsRoundTrip() throws {
+    let fixture = try fixture()
+    defer { fixture.cleanup() }
+    let store = try StatsConfigStore(url: fixture.url)
+    #expect(store.config.sectionDisplay.ai.grokQuota)
+    #expect(store.config.refresh.grokSeconds == 300)
+    try store.ensureFileExists()
+
+    let restored = try StatsConfigStore(url: fixture.url)
+    #expect(restored.config.sectionDisplay.ai.grokQuota)
+    #expect(restored.config.refresh.grokSeconds == 300)
+    let contents = try String(contentsOf: fixture.url, encoding: .utf8)
+    #expect(contents.contains("grok_quota = true"))
+    #expect(contents.contains("grok_seconds = 300"))
+  }
+
+  @Test("Existing config leaves Grok disabled")
+  func existingConfigLeavesGrokDisabled() throws {
+    let fixture = try fixture()
+    defer { fixture.cleanup() }
+    let config = validConfig()
+      .replacingOccurrences(of: "grok_quota = true\n", with: "")
+      .replacingOccurrences(of: "grok_seconds = 300\n", with: "")
+    try writeConfig(config, to: fixture.url)
+
+    let store = try StatsConfigStore(url: fixture.url)
+    #expect(store.config.sectionDisplay.ai.grokQuota == false)
+    #expect(store.config.refresh.grokSeconds == 300)
+  }
+
+  @Test("Grok refresh interval must be at least sixty seconds", arguments: [0, 59, 60, 600])
+  func grokRefreshValidation(seconds: Int) throws {
+    let fixture = try fixture()
+    defer { fixture.cleanup() }
+    try writeConfig(
+      validConfig().replacingOccurrences(
+        of: "grok_seconds = 300", with: "grok_seconds = \(seconds)"
+      ),
+      to: fixture.url
+    )
+
+    if seconds < 60 {
+      #expect(throws: (any Error).self) {
+        try StatsConfigStore(url: fixture.url)
+      }
+    } else {
+      let store = try StatsConfigStore(url: fixture.url)
+      #expect(store.config.refresh.grokSeconds == seconds)
+      try store.saveFontSize(18)
+      #expect(try StatsConfigStore(url: fixture.url).config.refresh.grokSeconds == seconds)
+    }
+  }
+
+  @Test("Grok alone is a valid AI display option")
+  func grokOnlyDisplayOption() throws {
+    let fixture = try fixture()
+    defer { fixture.cleanup() }
+    let store = try StatsConfigStore(url: fixture.url)
+    var display = SectionDisplayConfig(
+      ai: AIDisplayConfig(
+        heading: false, ampPlan: false, ampOrbs: false, ampCredits: false,
+        codexQuota: false, claudeQuota: false, grokQuota: true
+      )
+    )
+    #expect(display.ai.hasEnabledOption)
+    try store.saveSectionSettings(store.config.sections, display: display)
+    display.ai.grokQuota = false
+    #expect(display.ai.hasEnabledOption == false)
+    #expect(throws: (any Error).self) {
+      try store.saveSectionSettings(store.config.sections, display: display)
+    }
+    let encoded = try TOMLEncoder().encode(display.ai)
+    #expect(try TOMLDecoder().decode(AIDisplayConfig.self, from: encoded).grokQuota == false)
   }
 
   @Test("Unknown color theme is rejected")
@@ -320,6 +397,7 @@ struct StatsConfigTests {
     amp_credits = true
     codex_quota = true
     claude_quota = true
+    grok_quota = true
 
     [section_display.amp_activity]
     heading = true
@@ -340,6 +418,7 @@ struct StatsConfigTests {
     codex_seconds = 60
     amp_seconds = 300
     claude_seconds = 300
+    grok_seconds = 300
     storage_seconds = 300
 
     [desktop]

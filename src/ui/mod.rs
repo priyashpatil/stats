@@ -119,8 +119,8 @@ fn equal_column_widths(width: usize, count: usize) -> Vec<usize> {
 }
 
 use crate::model::{
-    AmpActivityUsage, AmpUsage, AppState, ClaudeUsage, Clock, CodexActivityUsage, ProviderState,
-    SystemMetrics,
+    AmpActivityUsage, AmpUsage, AppState, ClaudeUsage, Clock, CodexActivityUsage, GrokUsage,
+    ProviderState, SystemMetrics,
 };
 use crate::providers::codex::{codex_weekly_window, left_percent, ordered_buckets};
 
@@ -335,15 +335,7 @@ fn stats_lines(state: &AppState, dashboard: Dashboard<'_>, width: usize) -> Vec<
         render_system(&mut lines, &state.system, &display.system, width, theme);
     }
     if sections.ai {
-        render_ai_quotas(
-            &mut lines,
-            &state.amp,
-            &state.claude,
-            &state.codex,
-            &display.ai,
-            width,
-            theme,
-        );
+        render_ai_quotas(&mut lines, state, &display.ai, width, theme);
     }
     render_activity_sections(
         &mut lines,
@@ -530,9 +522,7 @@ fn render_system(
 
 fn render_ai_quotas(
     lines: &mut Vec<Line<'static>>,
-    amp: &ProviderState<AmpUsage>,
-    claude: &ProviderState<ClaudeUsage>,
-    codex: &ProviderState<Value>,
+    state: &AppState,
     display: &AiDisplayConfig,
     width: usize,
     theme: Theme,
@@ -545,13 +535,23 @@ fn render_ai_quotas(
     let mut statuses = Vec::new();
     let mut details = Vec::new();
     if display.amp_plan || display.amp_orbs || display.amp_credits {
-        collect_amp_ai_rows(&mut rows, &mut statuses, &mut details, amp, display, theme);
+        collect_amp_ai_rows(
+            &mut rows,
+            &mut statuses,
+            &mut details,
+            &state.amp,
+            display,
+            theme,
+        );
     }
     if display.claude_quota {
-        collect_claude_ai_rows(&mut rows, &mut statuses, claude);
+        collect_claude_ai_rows(&mut rows, &mut statuses, &state.claude);
     }
     if display.codex_quota {
-        collect_codex_ai_rows(&mut rows, &mut statuses, codex);
+        collect_codex_ai_rows(&mut rows, &mut statuses, &state.codex);
+    }
+    if display.grok_quota {
+        collect_grok_ai_rows(&mut rows, &mut statuses, &state.grok);
     }
 
     if display.heading && (!rows.is_empty() || !statuses.is_empty() || !details.is_empty()) {
@@ -559,6 +559,7 @@ fn render_ai_quotas(
     }
     lines.extend(statuses);
     if !rows.is_empty() {
+        rows.sort_by_key(|row| row.label.to_lowercase());
         render_ai_quota_rows(lines, rows, width, theme);
     }
     lines.extend(details);
@@ -780,6 +781,46 @@ fn collect_claude_ai_rows(
     }));
 }
 
+fn collect_grok_ai_rows(
+    rows: &mut Vec<AiQuotaRow>,
+    statuses: &mut Vec<Line<'static>>,
+    grok: &ProviderState<GrokUsage>,
+) {
+    if let Some(error) = &grok.error {
+        statuses.push(ai_status_row("Grok", format!("Error: {error}"), Color::Red));
+        return;
+    }
+    let Some(usage) = &grok.result else {
+        statuses.push(ai_status_row(
+            "Grok",
+            "Loading Grok usage...",
+            Color::Yellow,
+        ));
+        return;
+    };
+    if grok.stale {
+        let updated = grok
+            .updated_at
+            .as_ref()
+            .map(|time| time.format("%-d %b, %-I:%M%P").to_string())
+            .unwrap_or_else(|| "unknown".into());
+        statuses.push(ai_status_row(
+            "Grok",
+            format!("Last updated {updated}"),
+            Color::Yellow,
+        ));
+    }
+    rows.push(AiQuotaRow {
+        label: usage.label.clone(),
+        percent_left: (100.0 - usage.used_percent).clamp(0.0, 100.0),
+        reset: usage.reset.as_deref().map(|reset| {
+            DateTime::parse_from_rfc3339(reset)
+                .map(|time| time.with_timezone(&Local).format("%-d %b").to_string())
+                .unwrap_or_else(|_| reset.into())
+        }),
+    });
+}
+
 fn claude_compact_reset_label(label: &str, reset: &str) -> String {
     let reset = reset.split(" (").next().unwrap_or(reset);
     if label == "Claude 5h" {
@@ -809,7 +850,7 @@ fn collect_codex_ai_rows(
 ) {
     if let Some(error) = &codex.error {
         statuses.push(ai_status_row(
-            "Codex Pro",
+            "ChatGPT",
             format!("Error: {error}"),
             Color::Red,
         ));
@@ -817,8 +858,8 @@ fn collect_codex_ai_rows(
     }
     let Some(result) = &codex.result else {
         statuses.push(ai_status_row(
-            "Codex Pro",
-            "Loading Codex usage status...",
+            "ChatGPT",
+            "Loading ChatGPT usage status...",
             Color::Yellow,
         ));
         return;
@@ -826,7 +867,7 @@ fn collect_codex_ai_rows(
     for snapshot in ordered_buckets(result) {
         if let Some(window) = codex_weekly_window(snapshot) {
             rows.push(AiQuotaRow {
-                label: "Codex Pro".into(),
+                label: "ChatGPT".into(),
                 percent_left: left_percent(window),
                 reset: Some(codex_compact_reset_label(window)),
             });
@@ -1073,6 +1114,8 @@ pub(crate) fn print_once(
             (!display.amp_ai_needed(sections) || provider_ready_for_once(&state.amp, &started_at))
                 && (!display.claude_ai_needed(sections)
                     || provider_ready_for_once(&state.claude, &started_at))
+                && (!display.grok_ai_needed(sections)
+                    || provider_ready_for_once(&state.grok, &started_at))
                 && (!display.codex_ai_needed(sections)
                     || provider_ready_for_once(&state.codex, &started_at))
         };
@@ -1128,10 +1171,26 @@ pub(crate) fn print_once(
                 println!("{line}");
             }
         }
+        if display.ai.grok_quota {
+            let mut rows = Vec::new();
+            let mut statuses = Vec::new();
+            collect_grok_ai_rows(&mut rows, &mut statuses, &state.grok);
+            for status in statuses {
+                println!("{status}");
+            }
+            for row in rows {
+                println!(
+                    "{} {}% remaining · resets {}",
+                    row.label,
+                    row.percent_left,
+                    row.reset.unwrap_or_else(|| "unknown".into())
+                );
+            }
+        }
         if display.ai.codex_quota
             && let Some(error) = &state.codex.error
         {
-            println!("Codex error: {error}");
+            println!("ChatGPT error: {error}");
         } else if display.ai.codex_quota
             && let Some(result) = &state.codex.result
         {
@@ -1141,7 +1200,7 @@ pub(crate) fn print_once(
                     .and_then(Value::as_str)
                     .map(|plan| if plan == "prolite" { "Pro" } else { plan })
                     .unwrap_or("");
-                println!("Codex {plan}");
+                println!("ChatGPT {plan}");
                 if let Some(window) = codex_weekly_window(snapshot) {
                     println!(
                         "{} {:.0}% left {}",
@@ -1270,7 +1329,7 @@ mod tests {
     }
 
     #[test]
-    fn color_themes_coordinate_normal_values_and_activity_levels() {
+    fn color_themes_coordinate_normal_values() {
         for color_theme in [
             ColorTheme::Aurora,
             ColorTheme::Emerald,
@@ -1282,12 +1341,6 @@ mod tests {
 
             assert_eq!(color_for_remaining(90.0, theme), theme.accent);
             assert_eq!(color_for_usage(10.0, theme), theme.accent);
-            assert!(
-                theme
-                    .activity
-                    .windows(2)
-                    .all(|colors| colors[0] != colors[1])
-            );
         }
     }
 
@@ -1393,7 +1446,7 @@ mod tests {
 
         assert!(statuses.is_empty());
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].label, "Codex Pro");
+        assert_eq!(rows[0].label, "ChatGPT");
         assert_eq!(rows[0].percent_left, 96.0);
     }
 
@@ -1423,19 +1476,19 @@ mod tests {
     #[test]
     fn keeps_the_weekly_row_within_narrow_widths() {
         let row = AiQuotaRow {
-            label: "Codex Pro".into(),
+            label: "ChatGPT".into(),
             percent_left: 96.0,
             reset: Some("09:48am 8 Aug".into()),
         };
 
-        for width in [9, 10, 11, 12, 18, 19] {
+        for width in [9, 10, 11, 12, 14, 15, 18, 19] {
             let mut lines = Vec::new();
             render_ai_quota_rows(&mut lines, vec![row.clone()], width, Theme::default());
             assert_eq!(lines.len(), 1);
             assert!(line_text(&lines[0]).chars().count() <= width);
-            if width >= 18 {
+            if width >= 15 {
                 assert!(line_text(&lines[0]).contains("96% left"));
-            } else if width >= 12 {
+            } else if width >= 10 {
                 assert!(line_text(&lines[0]).contains("96%"));
             } else {
                 assert!(!line_text(&lines[0]).contains("96"));
@@ -1452,7 +1505,7 @@ mod tests {
                 reset: Some("22 Sep".into()),
             },
             AiQuotaRow {
-                label: "Codex Pro".into(),
+                label: "ChatGPT".into(),
                 percent_left: 95.0,
                 reset: Some("27 Aug".into()),
             },
@@ -1604,6 +1657,7 @@ mod tests {
                 amp_credits: false,
                 codex_quota: false,
                 claude_quota: false,
+                grok_quota: false,
             },
             ..SectionDisplayConfig::default()
         };
@@ -1676,9 +1730,11 @@ mod tests {
         let dashboard = Dashboard::new(&[], &sections, &display, ColorTheme::default());
         render_ai_quotas(
             &mut lines,
-            &amp,
-            &ProviderState::default(),
-            &codex,
+            &AppState {
+                amp,
+                codex,
+                ..AppState::default()
+            },
             &display.ai,
             58,
             dashboard.theme,
@@ -1698,7 +1754,7 @@ mod tests {
             .unwrap();
         let quota = text
             .iter()
-            .position(|line| line.contains("Codex Pro"))
+            .position(|line| line.contains("ChatGPT"))
             .unwrap();
         let orbs = text
             .iter()
@@ -1719,9 +1775,10 @@ mod tests {
 
         assert!(text[0].starts_with("AI"));
         assert!(text.iter().all(|line| line.chars().count() <= 58));
-        assert!(megawatt < orbs);
+        assert!(orbs < megawatt);
         assert!(orbs < quota);
-        assert!(quota < credits);
+        assert!(quota < megawatt);
+        assert!(megawatt < credits);
         assert!(text[orbs].contains("65% left"));
         assert!(!text[orbs].contains("1h20m12.210s"));
         assert!(text[megawatt].contains("Megawatt"));
@@ -1792,5 +1849,73 @@ mod tests {
         assert_eq!(rows[0].reset.as_deref(), Some("7:30pm"));
         assert_eq!(rows[1].percent_left, 100.0);
         assert_eq!(rows[1].reset.as_deref(), Some("12 Jan"));
+    }
+
+    #[test]
+    fn renders_grok_remaining_usage_and_stale_error_states() {
+        let mut grok = ProviderState {
+            result: Some(GrokUsage {
+                label: "Grok 7d".into(),
+                used_percent: 27.5,
+                reset: Some("2026-10-03T06:30:50Z".into()),
+            }),
+            stale: true,
+            ..ProviderState::default()
+        };
+        let mut rows = Vec::new();
+        let mut statuses = Vec::new();
+        collect_grok_ai_rows(&mut rows, &mut statuses, &grok);
+        assert_eq!(rows[0].percent_left, 72.5);
+        assert_eq!(rows[0].reset.as_deref(), Some("3 Oct"));
+        assert!(line_text(&statuses[0]).contains("Last updated"));
+        grok.error = Some("Sign in required".into());
+        rows.clear();
+        statuses.clear();
+        collect_grok_ai_rows(&mut rows, &mut statuses, &grok);
+        assert!(rows.is_empty());
+        assert!(line_text(&statuses[0]).contains("Sign in required"));
+    }
+
+    #[test]
+    fn sorts_subscription_rows_by_display_name() {
+        let state = AppState {
+            claude: ProviderState {
+                result: Some(ClaudeUsage {
+                    limits: vec![crate::model::ClaudeLimit {
+                        label: "Claude 7d".into(),
+                        used_percent: 12.0,
+                        reset: None,
+                    }],
+                }),
+                ..ProviderState::default()
+            },
+            grok: ProviderState {
+                result: Some(GrokUsage {
+                    label: "Grok 7d".into(),
+                    used_percent: 27.0,
+                    reset: None,
+                }),
+                ..ProviderState::default()
+            },
+            codex: ProviderState {
+                result: Some(serde_json::json!({"rateLimits": {
+                    "primary": {"usedPercent": 34, "windowDurationMins": 10080}
+                }})),
+                ..ProviderState::default()
+            },
+            ..AppState::default()
+        };
+        let display = AiDisplayConfig {
+            heading: false,
+            amp_plan: false,
+            amp_orbs: false,
+            amp_credits: false,
+            ..AiDisplayConfig::default()
+        };
+        let mut lines = Vec::new();
+        render_ai_quotas(&mut lines, &state, &display, 58, Theme::default());
+        assert!(line_text(&lines[0]).starts_with("ChatGPT"));
+        assert!(line_text(&lines[1]).starts_with("Claude 7d"));
+        assert!(line_text(&lines[2]).starts_with("Grok 7d"));
     }
 }

@@ -315,6 +315,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
     environment["COLORTERM"] = "truecolor"
     environment["PATH"] = [
       "\(home)/.local/bin",
+      "\(home)/.grok/bin",
       "\(home)/.cargo/bin",
       "/opt/homebrew/bin",
       "/opt/homebrew/sbin",

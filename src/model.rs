@@ -14,6 +14,7 @@ pub(crate) struct Args {
     pub(crate) once: bool,
     pub(crate) amp_interval: u64,
     pub(crate) claude_interval: u64,
+    pub(crate) grok_interval: u64,
     pub(crate) storage_interval: u64,
     pub(crate) clocks: Vec<Clock>,
     pub(crate) sections: SectionsConfig,
@@ -145,6 +146,13 @@ pub(crate) struct DailyTokenUsage {
     pub(crate) tokens: u64,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub(crate) struct GrokUsage {
+    pub(crate) label: String,
+    pub(crate) used_percent: f64,
+    pub(crate) reset: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct SystemMetrics {
     pub(crate) cpu_percent: Option<f64>,
@@ -188,6 +196,7 @@ pub(crate) struct AppState {
     pub(crate) amp_activity: ProviderState<AmpActivityUsage>,
     pub(crate) amp_activity_history_days: usize,
     pub(crate) claude: ProviderState<ClaudeUsage>,
+    pub(crate) grok: ProviderState<GrokUsage>,
     pub(crate) codex: ProviderState<Value>,
     pub(crate) codex_activity: ProviderState<CodexActivityUsage>,
     pub(crate) system: SystemMetrics,

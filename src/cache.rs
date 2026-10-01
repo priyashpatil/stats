@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 
 use crate::model::{
     AmpActivityUsage, AmpRequestLedger, AmpUsage, AppState, ClaudeUsage, CodexActivityUsage,
+    GrokUsage,
 };
 
 #[derive(Debug, Clone, Deserialize)]
@@ -149,6 +150,12 @@ pub(crate) fn prime_usage_caches(state: &Arc<Mutex<AppState>>) {
         state.claude.updated_at = Some(updated_at);
         state.claude.stale = true;
     }
+    if let Some((result, updated_at)) = read_usage_cache::<GrokUsage>("grok", None) {
+        let mut state = state.lock().unwrap();
+        state.grok.result = Some(result);
+        state.grok.updated_at = Some(updated_at);
+        state.grok.stale = true;
+    }
     if let Some((result, updated_at)) =
         read_usage_cache::<CodexActivityUsage>("codex-activity", None)
     {
@@ -197,6 +204,20 @@ pub(crate) fn load_cached_claude(state: &Arc<Mutex<AppState>>, error: String) {
         state.claude.stale = true;
     } else {
         state.claude.error = Some(error);
+    }
+}
+
+pub(crate) fn load_cached_grok(state: &Arc<Mutex<AppState>>, error: String) {
+    let cached = read_usage_cache::<GrokUsage>("grok", Some(env_u64("STATS_USAGE_CACHE_TTL", 600)))
+        .or_else(|| read_usage_cache::<GrokUsage>("grok", None));
+    let mut state = state.lock().unwrap();
+    if let Some((result, updated_at)) = cached {
+        state.grok.result = Some(result);
+        state.grok.updated_at = Some(updated_at);
+        state.grok.error = None;
+        state.grok.stale = true;
+    } else {
+        state.grok.error = Some(error);
     }
 }
 

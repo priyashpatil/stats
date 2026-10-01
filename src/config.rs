@@ -69,6 +69,8 @@ pub(crate) struct AiDisplayConfig {
     pub(crate) codex_quota: bool,
     #[serde(default)]
     pub(crate) claude_quota: bool,
+    #[serde(default)]
+    pub(crate) grok_quota: bool,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -97,6 +99,8 @@ pub(crate) struct RefreshConfig {
     pub(crate) amp_seconds: u64,
     #[serde(default = "default_claude_seconds")]
     pub(crate) claude_seconds: u64,
+    #[serde(default = "default_grok_seconds")]
+    pub(crate) grok_seconds: u64,
     pub(crate) storage_seconds: u64,
 }
 
@@ -109,6 +113,10 @@ fn default_codex_seconds() -> u64 {
 }
 
 fn default_claude_seconds() -> u64 {
+    300
+}
+
+fn default_grok_seconds() -> u64 {
     300
 }
 
@@ -187,7 +195,8 @@ all_true_default!(AiDisplayConfig {
     amp_orbs,
     amp_credits,
     codex_quota,
-    claude_quota
+    claude_quota,
+    grok_quota
 });
 all_true_default!(AmpActivityDisplayConfig {
     heading,
@@ -227,6 +236,10 @@ impl SectionDisplayConfig {
         sections.ai && self.ai.claude_quota
     }
 
+    pub(crate) fn grok_ai_needed(&self, sections: &SectionsConfig) -> bool {
+        sections.ai && self.ai.grok_quota
+    }
+
     pub(crate) fn amp_activity_needed(&self, sections: &SectionsConfig) -> bool {
         sections.amp_activity
             && (self.amp_activity.calendar
@@ -251,6 +264,7 @@ impl Default for RefreshConfig {
             codex_seconds: 60,
             amp_seconds: 300,
             claude_seconds: default_claude_seconds(),
+            grok_seconds: default_grok_seconds(),
             storage_seconds: 300,
         }
     }
@@ -341,6 +355,9 @@ fn validate(config: &Config) -> Result<(), String> {
     if config.refresh.claude_seconds < 60 {
         return Err("refresh.claude_seconds must be at least 60".into());
     }
+    if config.refresh.grok_seconds < 60 {
+        return Err("refresh.grok_seconds must be at least 60".into());
+    }
     if config.refresh.storage_seconds < 60 {
         return Err("refresh.storage_seconds must be at least 60".into());
     }
@@ -379,7 +396,8 @@ any_enabled!(AiDisplayConfig {
     amp_orbs,
     amp_credits,
     codex_quota,
-    claude_quota
+    claude_quota,
+    grok_quota
 });
 any_enabled!(AmpActivityDisplayConfig {
     heading,
@@ -579,6 +597,7 @@ mod tests {
                 amp_credits: false,
                 codex_quota: false,
                 claude_quota: false,
+                grok_quota: false,
             },
             amp_activity: AmpActivityDisplayConfig {
                 heading: true,
@@ -682,6 +701,32 @@ mod tests {
     }
 
     #[test]
+    fn grok_config_is_backward_compatible_and_validates_refresh() {
+        let path = temporary_path("grok");
+        write(
+            &path,
+            &valid_config()
+                .replace("grok_quota = true\n", "")
+                .replace("grok_seconds = 300\n", ""),
+        );
+        let config = load(&path).unwrap();
+        assert!(!config.section_display.grok_ai_needed(&config.sections));
+        assert_eq!(config.refresh.grok_seconds, 300);
+        write(
+            &path,
+            &valid_config().replace("grok_seconds = 300", "grok_seconds = 59"),
+        );
+        assert!(load(&path).unwrap_err().contains("refresh.grok_seconds"));
+        write(
+            &path,
+            &valid_config().replace("grok_seconds = 300", "grok_seconds = 60"),
+        );
+        let config = load(&path).unwrap();
+        assert!(config.section_display.grok_ai_needed(&config.sections));
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn rejects_unsupported_version() {
         let path = temporary_path("version");
         write(&path, &valid_config().replace("version = 2", "version = 3"));
@@ -747,6 +792,7 @@ amp_orbs = true
 amp_credits = true
 codex_quota = true
 claude_quota = true
+grok_quota = true
 
 [section_display.amp_activity]
 heading = true
@@ -767,6 +813,7 @@ daily_activity = true
 codex_seconds = 60
 amp_seconds = 300
 claude_seconds = 300
+grok_seconds = 300
 storage_seconds = 300
 
 [desktop]

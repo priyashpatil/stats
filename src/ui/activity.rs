@@ -837,6 +837,75 @@ mod tests {
     }
 
     #[test]
+    fn renders_compact_cells_using_the_selected_theme() {
+        let usage = activity(&[
+            ("2026-07-26", 10),
+            ("2026-07-27", 20),
+            ("2026-07-28", 30),
+            ("2026-07-29", 40),
+            ("2026-07-30", 50),
+            ("2026-07-31", 60),
+            ("2026-08-01", 70),
+            ("2026-08-02", 80),
+        ]);
+        let calendar = activity_calendar(&usage, 30, date("2026-08-02")).unwrap();
+        for (theme, expected) in [
+            (
+                crate::config::ColorTheme::Emerald,
+                [
+                    Color::Rgb(49, 147, 95),
+                    Color::Rgb(66, 173, 112),
+                    Color::Rgb(99, 201, 134),
+                    Color::Rgb(152, 231, 165),
+                ],
+            ),
+            (
+                crate::config::ColorTheme::Ocean,
+                [
+                    Color::Rgb(84, 131, 196),
+                    Color::Rgb(92, 147, 207),
+                    Color::Rgb(113, 172, 224),
+                    Color::Rgb(154, 199, 240),
+                ],
+            ),
+        ] {
+            let mut lines = Vec::new();
+            render_activity_calendar(
+                &mut lines,
+                &calendar,
+                30,
+                true,
+                false,
+                false,
+                Theme::new(theme),
+            );
+            let colors = lines
+                .iter()
+                .flat_map(|line| &line.spans)
+                .filter(|span| span.content == "■")
+                .map(|span| span.style.fg.unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                colors,
+                vec![
+                    expected[0],
+                    expected[3],
+                    expected[1],
+                    expected[1],
+                    expected[2],
+                    expected[2],
+                    expected[3],
+                    expected[3],
+                ]
+            );
+            assert!(lines.iter().all(|line| !line_text(line).contains('▪')));
+            assert_eq!(line_text(&lines[1]).chars().count(), 30);
+            assert!(line_text(&lines[1]).ends_with("■ ■"));
+            assert!(line_text(&lines[7]).ends_with(' '));
+        }
+    }
+
+    #[test]
     fn places_activity_in_calendar_rows_and_marks_missing_past_dates() {
         let state = ProviderState {
             result: Some(activity(&[("2026-07-26", 10), ("2026-08-01", 20)])),

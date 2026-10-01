@@ -15,6 +15,7 @@ use crate::providers::codex::{
     pick_port, run_codex_usage_status, shutdown_server, spawn_codex_client, start_codex_server,
     wait_ready,
 };
+use crate::providers::grok::spawn_refresh_grok;
 use crate::system::{prime_system, spawn_refresh_system};
 use crate::ui::{print_once, run_tui};
 
@@ -115,6 +116,9 @@ fn run_stats(args: Args) -> Result<AppOutcome, String> {
         }
         if claude_ai_needed {
             spawn_refresh_claude(&state, &stop, args.claude_interval);
+        }
+        if args.section_display.grok_ai_needed(&args.sections) {
+            spawn_refresh_grok(&state, &stop, args.grok_interval);
         }
         if let Some(port) = port {
             spawn_codex_client(
