@@ -258,11 +258,15 @@ pub(crate) fn ordered_buckets(result: &Value) -> Vec<&Value> {
     values
 }
 
-pub(crate) fn codex_weekly_window(snapshot: &Value) -> Option<&Value> {
-    ["primary", "secondary"]
-        .into_iter()
-        .filter_map(|key| snapshot.get(key))
-        .find(|window| window.get("windowDurationMins").and_then(Value::as_i64) == Some(10080))
+pub(crate) fn codex_quota_windows(snapshot: &Value) -> impl Iterator<Item = &Value> {
+    [300, 10080].into_iter().filter_map(move |duration| {
+        ["primary", "secondary"]
+            .into_iter()
+            .filter_map(|key| snapshot.get(key))
+            .find(|window| {
+                window.get("windowDurationMins").and_then(Value::as_i64) == Some(duration)
+            })
+    })
 }
 
 pub(crate) fn left_percent(window: &Value) -> f64 {
@@ -351,7 +355,7 @@ fn print_codex_usage_status(result: &Value) {
     for snapshot in ordered_buckets(result) {
         println!();
         println!("{}:", codex_limit_title(snapshot));
-        if let Some(window) = codex_weekly_window(snapshot) {
+        for window in codex_quota_windows(snapshot) {
             print_codex_status_window(window);
         }
         if let Some(credits) = snapshot.get("credits") {
@@ -447,21 +451,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn selects_only_the_codex_weekly_window() {
-        let snapshot = json!({
-            "primary": {
-                "usedPercent": 25,
-                "windowDurationMins": 300
-            },
-            "secondary": {
-                "usedPercent": 4,
-                "windowDurationMins": 10080
+    fn selects_codex_quota_windows_by_duration_in_either_slot() {
+        let five_hour = json!({ "usedPercent": 25, "windowDurationMins": 300 });
+        let weekly = json!({ "usedPercent": 4, "windowDurationMins": 10080 });
+
+        for (primary, secondary) in [(&five_hour, &weekly), (&weekly, &five_hour)] {
+            let snapshot = json!({ "primary": primary, "secondary": secondary });
+            let windows = codex_quota_windows(&snapshot).collect::<Vec<_>>();
+
+            assert_eq!(windows, vec![&five_hour, &weekly]);
+        }
+    }
+
+    #[test]
+    fn omits_codex_quota_windows_that_are_not_reported() {
+        for duration in [300, 10080] {
+            let window = json!({ "usedPercent": 13, "windowDurationMins": duration });
+            for snapshot in [
+                json!({ "primary": window, "secondary": null }),
+                json!({ "primary": null, "secondary": window }),
+                json!({ "primary": window }),
+            ] {
+                assert_eq!(
+                    codex_quota_windows(&snapshot).collect::<Vec<_>>(),
+                    vec![&window]
+                );
             }
-        });
+        }
 
-        let weekly = codex_weekly_window(&snapshot).expect("weekly window");
-
-        assert_eq!(weekly["windowDurationMins"], 10080);
-        assert_eq!(weekly["usedPercent"], 4);
+        for snapshot in [
+            json!({}),
+            json!({ "primary": null, "secondary": null }),
+            json!({ "primary": { "usedPercent": 5, "windowDurationMins": 60 } }),
+        ] {
+            assert_eq!(codex_quota_windows(&snapshot).count(), 0);
+        }
     }
 }

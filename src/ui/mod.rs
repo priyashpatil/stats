@@ -122,7 +122,7 @@ use crate::model::{
     AmpActivityUsage, AmpUsage, AppState, ClaudeUsage, Clock, CodexActivityUsage, GrokUsage,
     ProviderState, SystemMetrics,
 };
-use crate::providers::codex::{codex_weekly_window, left_percent, ordered_buckets};
+use crate::providers::codex::{codex_quota_windows, left_percent, ordered_buckets};
 
 mod activity;
 use crate::config::{
@@ -865,9 +865,13 @@ fn collect_codex_ai_rows(
         return;
     };
     for snapshot in ordered_buckets(result) {
-        if let Some(window) = codex_weekly_window(snapshot) {
+        for window in codex_quota_windows(snapshot) {
             rows.push(AiQuotaRow {
-                label: "ChatGPT".into(),
+                label: if window["windowDurationMins"] == 300 {
+                    "ChatGPT 5h".into()
+                } else {
+                    "ChatGPT".into()
+                },
                 percent_left: left_percent(window),
                 reset: Some(codex_compact_reset_label(window)),
             });
@@ -1201,7 +1205,7 @@ pub(crate) fn print_once(
                     .map(|plan| if plan == "prolite" { "Pro" } else { plan })
                     .unwrap_or("");
                 println!("ChatGPT {plan}");
-                if let Some(window) = codex_weekly_window(snapshot) {
+                for window in codex_quota_windows(snapshot) {
                     println!(
                         "{} {:.0}% left {}",
                         window_label(window),
@@ -1419,18 +1423,20 @@ mod tests {
     }
 
     #[test]
-    fn renders_only_one_codex_weekly_row() {
+    fn renders_codex_five_hour_and_weekly_rows_with_separate_resets() {
+        let five_hour_reset = Local::now() + chrono::Duration::hours(2);
+        let weekly_reset = Local::now() + chrono::Duration::days(7);
         let codex = ProviderState {
             result: Some(json!({
                 "rateLimitsByLimitId": {
                     "codex": {
                         "primary": {
-                            "resetsAt": 1784696828_i64,
+                            "resetsAt": five_hour_reset.timestamp(),
                             "usedPercent": 25,
                             "windowDurationMins": 300
                         },
                         "secondary": {
-                            "resetsAt": 1784696828_i64,
+                            "resetsAt": weekly_reset.timestamp(),
                             "usedPercent": 4,
                             "windowDurationMins": 10080
                         }
@@ -1445,9 +1451,65 @@ mod tests {
         collect_codex_ai_rows(&mut rows, &mut statuses, &codex);
 
         assert!(statuses.is_empty());
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].label, "ChatGPT");
-        assert_eq!(rows[0].percent_left, 96.0);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].label, "ChatGPT 5h");
+        assert_eq!(rows[0].percent_left, 75.0);
+        let expected_five_hour_reset = if five_hour_reset.date_naive() == Local::now().date_naive()
+        {
+            five_hour_reset.format("%-I:%M%P").to_string()
+        } else {
+            five_hour_reset.format("%-d %b").to_string()
+        };
+        assert_eq!(
+            rows[0].reset.as_deref(),
+            Some(expected_five_hour_reset.as_str())
+        );
+        assert_eq!(rows[1].label, "ChatGPT");
+        assert_eq!(rows[1].percent_left, 96.0);
+        assert_eq!(
+            rows[1].reset,
+            Some(weekly_reset.format("%-d %b").to_string())
+        );
+
+        let mut lines = Vec::new();
+        render_ai_quota_rows(&mut lines, rows, 58, Theme::default());
+        assert!(line_text(&lines[0]).starts_with("ChatGPT 5h"));
+        assert!(line_text(&lines[0]).contains("75% left"));
+        assert!(line_text(&lines[1]).starts_with("ChatGPT "));
+        assert!(line_text(&lines[1]).contains("96% left"));
+        assert!(
+            lines
+                .iter()
+                .all(|line| line_text(line).chars().count() == 58)
+        );
+    }
+
+    #[test]
+    fn keeps_one_codex_weekly_row_when_five_hour_limit_is_absent() {
+        for result in [
+            json!({ "rateLimits": {
+                "primary": { "usedPercent": 4, "windowDurationMins": 10080 },
+                "secondary": null
+            }}),
+            json!({ "rateLimitsByLimitId": { "codex": {
+                "primary": null,
+                "secondary": { "usedPercent": 4, "windowDurationMins": 10080 }
+            }}}),
+        ] {
+            let codex = ProviderState {
+                result: Some(result),
+                ..ProviderState::default()
+            };
+            let mut rows = Vec::new();
+            let mut statuses = Vec::new();
+
+            collect_codex_ai_rows(&mut rows, &mut statuses, &codex);
+
+            assert!(statuses.is_empty());
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].label, "ChatGPT");
+            assert_eq!(rows[0].percent_left, 96.0);
+        }
     }
 
     #[test]

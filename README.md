@@ -11,7 +11,7 @@ Stats is a lightweight dashboard for your Mac's system health and AI coding usag
 - CPU, RAM, GPU, storage, and network metrics
 - Amp tier, Orb usage/runtime, and individual credit balance
 - Claude five-hour, weekly, and model-specific subscription quotas
-- Codex weekly quota and token activity
+- Codex five-hour and weekly quotas when reported, plus token activity
 - Four customizable world clocks
 
 Stats reads usage through the installed Amp, Claude, and Codex CLIs. It does not read or store their credentials.
