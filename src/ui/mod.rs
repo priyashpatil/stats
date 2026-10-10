@@ -443,13 +443,19 @@ fn render_system(
     width: usize,
     theme: Theme,
 ) {
+    let storage_value = storage_label(system);
+    let value_width = if display.storage {
+        storage_value.chars().count().max(9)
+    } else {
+        9
+    };
     let mut rows = Vec::new();
     if display.cpu {
         rows.push(metric_row(
             "CPU",
             system.cpu_percent,
             "used",
-            true,
+            value_width,
             width,
             theme,
         ));
@@ -459,7 +465,7 @@ fn render_system(
             "RAM",
             Some(system.ram_percent),
             "used",
-            true,
+            value_width,
             width,
             theme,
         ));
@@ -469,7 +475,7 @@ fn render_system(
             "GPU",
             system.gpu_percent,
             "used",
-            true,
+            value_width,
             width,
             theme,
         ));
@@ -478,16 +484,15 @@ fn render_system(
         let used_percent = (100.0 - system.storage_percent_free).clamp(0.0, 100.0);
         let color = color_for_usage(used_percent, theme);
         let mut storage = vec![dim(fixed("Storage", 8))];
-        let storage_value = format!("{:>3}% free", system.storage_percent_free.round() as i64);
         storage.extend(bar_spans(
             used_percent,
-            metric_bar_width(width, 8, storage_value.chars().count()),
+            metric_bar_width(width, 8, value_width),
             color,
         ));
         storage.extend([
             Span::raw("  "),
             span(
-                storage_value,
+                format!("{storage_value:>value_width$}"),
                 color_for_remaining(system.storage_percent_free, theme),
                 true,
             ),
@@ -972,24 +977,23 @@ fn metric_row(
     label: &str,
     percent: Option<f64>,
     suffix: &str,
-    usage: bool,
+    value_width: usize,
     width: usize,
     theme: Theme,
 ) -> Line<'static> {
     if let Some(percent) = percent {
-        let color = if usage {
-            color_for_usage(percent, theme)
-        } else {
-            color_for_remaining(percent, theme)
-        };
+        let color = color_for_usage(percent, theme);
         let value = format!("{:>3}% {suffix}", percent.round() as i64);
         let mut row = vec![dim(fixed(label, 8))];
         row.extend(bar_spans(
             percent,
-            metric_bar_width(width, 8, value.chars().count()),
+            metric_bar_width(width, 8, value_width),
             color,
         ));
-        row.extend([Span::raw("  "), span(value, color, true)]);
+        row.extend([
+            Span::raw("  "),
+            span(format!("{value:>value_width$}"), color, true),
+        ]);
         Line::from(row)
     } else {
         Line::from(vec![dim(fixed(label, 8)), dim("sampling")])
@@ -1069,6 +1073,20 @@ fn color_for_remaining(percent: f64, theme: Theme) -> Color {
 
 fn color_for_usage(percent: f64, theme: Theme) -> Color {
     color_for_remaining(100.0 - percent, theme)
+}
+
+fn storage_label(system: &SystemMetrics) -> String {
+    if system.storage_free >= 1_000_000_000_000 {
+        format!(
+            "{:.1} TB free",
+            system.storage_free as f64 / 1_000_000_000_000.0
+        )
+    } else {
+        format!(
+            "{:.0} GB free",
+            system.storage_free as f64 / 1_000_000_000.0
+        )
+    }
 }
 
 fn rate_label(value: Option<f64>) -> String {
@@ -1161,7 +1179,7 @@ pub(crate) fn print_once(
             );
         }
         if display.system.storage {
-            println!("Storage {:.0}% free", state.system.storage_percent_free);
+            println!("Storage {}", storage_label(&state.system));
         }
     }
     if sections.ai {
@@ -1663,6 +1681,69 @@ mod tests {
             Theme::default(),
         );
         assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn renders_storage_free_capacity_on_the_system_bar_grid() {
+        let sections = SectionsConfig {
+            clocks: false,
+            system: true,
+            ai: false,
+            amp_activity: false,
+            codex_activity: false,
+        };
+        let display = SectionDisplayConfig::default();
+        let dashboard = Dashboard::new(&[], &sections, &display, ColorTheme::default());
+
+        for (total, free, expected) in [
+            (1_000_000_000_000, 279_000_000_000, "279 GB free"),
+            (2_000_000_000_000, 650_000_000_000, "650 GB free"),
+            (2_000_000_000_000, 1_350_000_000_000, "1.4 TB free"),
+            (500_000_000_000, 0, "0 GB free"),
+            (500_000_000_000, 500_000_000_000, "500 GB free"),
+        ] {
+            let state = AppState {
+                system: SystemMetrics {
+                    cpu_percent: Some(17.0),
+                    ram_percent: 41.0,
+                    gpu_percent: Some(83.0),
+                    storage_total: total,
+                    storage_free: free,
+                    storage_percent_free: free as f64 / total as f64 * 100.0,
+                    ..SystemMetrics::default()
+                },
+                ..AppState::default()
+            };
+            for width in [40, 58] {
+                let rows = stats_lines(&state, dashboard, width)
+                    .iter()
+                    .map(line_text)
+                    .filter(|line| {
+                        ["CPU", "RAM", "GPU", "Storage"]
+                            .iter()
+                            .any(|label| line.starts_with(label))
+                    })
+                    .collect::<Vec<_>>();
+                let storage = &rows[3];
+
+                assert!(storage.ends_with(expected), "{storage}");
+                assert!(!storage.contains(['/', '%']));
+                assert!(!storage.contains("used"));
+                assert!(rows[0].ends_with("17% used"));
+                assert!(rows[1].ends_with("41% used"));
+                assert!(rows[2].ends_with("83% used"));
+                let bar_width = |row: &str| {
+                    row.chars()
+                        .skip(8)
+                        .take_while(|ch| matches!(ch, '━' | '·'))
+                        .count()
+                };
+                for row in &rows {
+                    assert_eq!(row.chars().count(), width);
+                    assert_eq!(bar_width(row), bar_width(storage));
+                }
+            }
+        }
     }
 
     #[test]
