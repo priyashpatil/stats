@@ -86,7 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate,
       showsScrollbar: configStore.config.desktop.showScrollbar
     )
     let font = terminalFont(size: configStore.config.desktop.fontSize)
-    let terminal = LocalProcessTerminalView(
+    let terminal = DashboardTerminalView(
       frame: terminalFrame,
       font: font,
       options: .default
